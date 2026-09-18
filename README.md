@@ -16,9 +16,15 @@ An open-source alternative to LanTopoLog. MIT license.
 
 *Alarm panel: port errors, discards and host outages with one-click access to the switch port table.*
 
-## Features (v0.6.11)
+## Features (v0.6.13)
 
 - SNMP v2c polling of switches: device name, ports, speeds, statuses.
+  Each switch has a time budget for its whole poll
+  (`snmp.host_budget_seconds`) and may carry SNMP settings of its
+  own, so one slow agent delays itself rather than the whole map —
+  and is marked as late rather than reported as unreachable, which
+  it is not. An OID that answers nothing but timeouts is left alone
+  for a while and then tried again, out loud in the log both times.
 - MAC address tables (BRIDGE-MIB and Q-BRIDGE-MIB) from every switch,
   including entries on trunk bridge-ports missing from
   `dot1dBasePortIfIndex` (e.g. D-Link LACP trunks).
@@ -157,13 +163,20 @@ An open-source alternative to LanTopoLog. MIT license.
   walk that stops partway through a table is resumed from where it
   stopped, and the ports it still missed are fetched one at a time. A
   switch whose poll fails costs only its own data: the others are
-  collected and shown regardless. The "Ports" panel of a switch shows live rates;
+  collected and shown regardless. A measured rate is never thrown away
+  for being old: it is shown dimmed with its age, and only past
+  `stale_rate_hide_minutes` does the cell empty — "—" means the port
+  has never been measured, which is a different fact and a different
+  investigation. The "Ports" panel of a switch shows live rates;
   map edges show the current trunk load ("2×1 Gbit/s · ↓34 ↑12 Mbit/s",
   summed over LAG members). Counter resets after a switch reboot are
   detected and do not produce rate spikes.
 - Stateful alarms: host_down (3 missed pings, only for hosts marked
   "Monitor" — the journal still records everything), switch_down
-  (2 failed SNMP polls, critical), port_errors, port_discards and
+  (2 failed SNMP polls, critical), switch_stale (a switch that answers
+  but has not finished a full poll for several scans — its data has
+  stopped being refreshed, which is neither up nor down), port_errors,
+  port_discards and
   port_util (threshold plus hysteresis), port_hosts_down (critical:
   several devices of one port went silent at once — one alarm instead
   of a burst), lag_degraded (a LAG member went down), new_mac. The
@@ -224,6 +237,8 @@ Version history: [CHANGELOG.md](CHANGELOG.md)
 | v0.6.9 ✓| A device seen on an uplink is not behind it; host placement under test |
 | v0.6.10 ✓| Devices seen through a trunk are grouped beyond it, not on it |
 | v0.6.11 ✓| One root is one root; a panel header stays put |
+| v0.6.12 ✓| A slow agent delays itself, not the whole map; per-switch SNMP settings |
+| v0.6.13 ✓| A dash means never measured; an unknown root is not a root |
 | v0.7    | Export to PDF and Draw.io, MAC address info import |
 | v0.8    | Windows computer inventory (WMI/WinRM) |
 
@@ -257,10 +272,20 @@ snmp:
   retries: 2               # re-sends of a single request
   retries_on_break: 2      # times a walk that stops mid-table is
                            # picked back up from where it stopped
+  host_budget_seconds: 120 # the whole poll of one switch, start to
+                           # finish. `timeout` bounds one request;
+                           # this bounds the sum of them
+  dead_oid_strikes: 3      # walks with no rows AND a timeout, in a
+                           # row, after which that OID is left alone
+                           # on that host (0 — never)
+  dead_oid_cooldown_scans: 30  # for this many scans, then tried again
 
-switches:                  # IP addresses of managed switches
-  - 192.168.1.2
-  - 192.168.1.3
+switches:                  # IP addresses of managed switches. An entry
+  - 192.168.1.2            # is an address, or a mapping with `ip:` and
+  - ip: 192.168.1.3        # any snmp: key, which then applies to that
+    timeout: 2             # switch alone; everything else is inherited
+    retries: 1
+    host_budget_seconds: 90
 
 routers:                   # devices with an ARP table (routers,
   - 192.168.1.1            # L3 switches) — the source of host IPs
@@ -368,6 +393,144 @@ python -m moonlan.notify --test
 
 It sends a test message to every enabled channel and prints a
 per-channel result.
+
+### When one switch is not like the others
+
+A network is never made of one kind of hardware, and the settings
+above are one compromise for all of it. Four keys exist for the device
+that does not fit.
+
+**`snmp.host_budget_seconds`** (default 120) bounds the whole poll of
+one switch, start to finish; `timeout` bounds one request. A poll is a
+dozen walks of a dozen requests each, so an agent that answers
+everything slowly stays inside every single timeout and still takes
+eight minutes — and the scan waits for the last switch. A switch that
+runs past its budget is left out of that scan; the rest of the network
+gets its map on time.
+
+It is **not** reported as unreachable, because it is not: it answers,
+only too slowly. No `switch_down` is raised for it and none is cleared.
+Its last complete reading stays on the map, its card says when that
+reading was taken, and the header says how many switches ran out of
+time.
+
+**Per-switch settings.** An entry in `switches:` may be a mapping with
+`ip:` and any of `community`, `timeout`, `retries`,
+`retries_on_break`, `host_budget_seconds`. Those apply to that switch
+alone; anything not written there is inherited from the `snmp:`
+section. The old plain list of addresses keeps working exactly as it
+did.
+
+Reach for this when one device is unlike the rest. A box that answers
+slowly usually wants a *shorter* timeout and one retry, not a longer
+one: the requests that cost the time are the ones it will never answer,
+and the sooner they are given up on the better. A corner of the network
+set up years apart from the rest may want its own community.
+
+```yaml
+switches:
+  - 192.168.1.2                  # as before: everything from snmp:
+  - ip: 192.168.1.3
+    timeout: 2                   # a slow box: better to give up fast
+    retries: 1
+    host_budget_seconds: 90
+  - ip: 192.168.1.4
+    community: OtherString
+```
+
+`python -m moonlan.diag --config` prints the settings every switch is
+actually polled with and marks the ones it was given of its own.
+
+**`snmp.dead_oid_strikes`** (default 3) and
+**`snmp.dead_oid_cooldown_scans`** (default 30). An agent that does
+not implement a table is supposed to answer `noSuchObject`, which
+costs one round trip. Some go quiet instead, and the walk pays the
+whole retry budget to learn nothing — every cycle, forever. After
+`dead_oid_strikes` walks in a row that returned no rows **and** ended
+in a timeout, MoonLan stops asking that host for that OID for
+`dead_oid_cooldown_scans` scans, then tries again: firmware gets
+updated.
+
+Only that one outcome counts. A partial answer is what
+`retries_on_break` is for, and an honest `noSuchObject` is cheap to
+keep asking for. Both the pause and the resumption are logged, and the
+skipped walk reports "no answer" rather than an empty table — data
+missing because MoonLan stopped asking must never be mistaken for data
+the device denies having. Set `dead_oid_strikes: 0` to switch the rule
+off.
+
+```bash
+python -m moonlan.diag --skipped
+```
+
+asks the running service what is on pause right now and for how many
+more scans.
+
+### A dash, a stale value and a switch that stopped being read
+
+Three settings exist because three different absences used to look
+alike.
+
+**`stale_rate_hide_minutes`** (default 30). A measured port rate is
+never thrown away for being old. Until v0.6.13 anything older than
+three counters intervals was dropped from the answer and the panel drew
+"—" — the same "—" it draws for a counter the agent does not implement.
+Those are opposite diagnoses: one says "this switch has no such
+counter, stop looking", the other says "nobody has measured this
+lately". Now a rate older than three intervals is dimmed and says when
+it was taken; past this many minutes the cell empties, because a
+half-hour-old speed is a memory — and even then hovering it says when
+the port was last measured. A bare "—" with nothing behind it means the
+port has never been measured at all.
+
+**`stale_switch_scans`** (default 5). A switch may answer and never
+finish answering: its poll budget runs out every scan, its data stops
+being refreshed, and on the map it goes on looking alive from its last
+complete reading. One deployment had a switch that was not read in full
+once in six hours — thirty scans, thirty budget failures — and nothing
+said so outside the journal. After this many consecutive scans its card
+counts them and dates the reading, the switch list says the same on
+hover, and a `switch_stale` alarm is raised (warning, syslog by
+default). Never `switch_down`: sending somebody to look for a dead
+device that is answering wastes the trip. It clears the moment one full
+poll finishes.
+
+The usual cure is not a bigger budget but a shorter timeout for that
+device — see the per-switch settings above. `diag --config` prints how
+long each switch's last complete poll actually took, which is the
+number to set a budget from.
+
+**The counters cycle and the poll budget.** A scan holds a switch for
+as long as its budget allows, and a counters cycle that finds it held
+waits briefly and then skips it. So a `host_budget_seconds` at or above
+twice `counters_interval_seconds` means that switch misses a cycle
+after every scan and its rates visibly age. MoonLan says so at startup
+and in `diag --config`, per device. It is not forbidden — a genuinely
+slow agent may need the budget — but it should be a decision rather
+than a surprise.
+
+### When SNMP says nothing at all
+
+SNMPv2c does not answer a wrong community string. Not with an error —
+it does not answer. From outside, that silence is shaped exactly like
+an agent that does not implement the object you asked for, and MoonLan
+used to say precisely that.
+
+So before deciding, it asks: `sysDescr`, which every agent must
+implement, and a ping.
+
+- the host answers ping and says nothing to `sysDescr` → the community
+  string or a disabled agent, and that is named first;
+- silent on both → not reachable from here at all, a network question
+  before it is an SNMP one;
+- `sysDescr` answers and the OID you asked about does not → the old
+  verdict, which is true here and can be said firmly.
+
+The same sentence goes into the service log when a switch stops
+answering. And when every configured switch goes silent at once, that
+is reported as one fact rather than N: one common cause is likelier
+than N simultaneous faults, and `snmp.community` is the first place to
+look.
 
 ## Running
 
@@ -496,6 +659,23 @@ instance `errors_per_minute: 10` used to count discards as errors and
 now applies to damaged frames alone, where the default is 5. The
 service logs the same summary on startup, at WARNING level when the
 file contains keys it does not recognise.
+
+The last table it prints is the SNMP settings every switch is actually
+polled with, marking the ones that switch was given of its own rather
+than inheriting from `snmp:`.
+
+#### What is not being asked for
+
+```bash
+python -m moonlan.diag --skipped
+```
+
+Lists the (host, OID) pairs MoonLan has stopped polling because they
+answered nothing but timeouts, and how many scans are left before each
+is tried again — see `dead_oid_strikes` above. The pause lives in the
+running service, so this asks it over the API rather than guessing; it
+needs MoonLan to be up, at the `listen.host` / `listen.port` from the
+same `config.yaml`.
 
 #### How complete is the inventory
 

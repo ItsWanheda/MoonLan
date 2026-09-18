@@ -275,11 +275,34 @@ function fmtDate(ts) {
   return ts ? new Date(ts * 1000).toLocaleDateString(locale()) : "—";
 }
 
+/* "4 min", "2 h 10 min" — how long ago something was measured. */
+function fmtAge(seconds) {
+  if (seconds == null) return "—";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 1) return t("ageUnderMinute");
+  if (minutes < 60) return fmt("ageMinutes", { n: minutes });
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest
+    ? fmt("ageHoursMinutes", { h: hours, n: rest })
+    : fmt("ageHours", { h: hours });
+}
+
 function updateScanStatus() {
   els.scanStatus.classList.remove("failed");
+  els.scanStatus.classList.remove("partial");
   els.scanStatus.title = "";
-  if (isScanning) {
-    els.scanStatus.textContent = t("scanning");
+  // A scan of eight switches took ten minutes and the interface said
+  // nothing at all about it — the only way to find out whether
+  // anything was happening was journalctl. One line settles it.
+  if (isScanning || topology.scanning) {
+    els.scanStatus.textContent =
+      topology.scan_total > 0
+        ? fmt("scanningProgress", {
+            done: topology.scan_done || 0,
+            total: topology.scan_total,
+          })
+        : t("scanning");
     return;
   }
   // A failed scan used to read exactly like a service that had just
@@ -295,6 +318,47 @@ function updateScanStatus() {
   els.scanStatus.textContent = topology.last_scan
     ? t("scanPrefix") + new Date(topology.last_scan * 1000).toLocaleString(locale())
     : t("noData");
+  // Switches the last scan gave up waiting for. Worth seeing — their
+  // part of the map is older than the rest — but not an alarm: they
+  // answer, and nothing about them is being claimed.
+  const late = topology.scan_over_budget || [];
+  if (late.length) {
+    els.scanStatus.classList.add("partial");
+    els.scanStatus.textContent +=
+      "  " + fmt("scanOverBudgetMark", { n: late.length });
+    els.scanStatus.title = fmt("scanOverBudgetHint", {
+      switches: late.map(switchName).join(", "),
+    });
+  }
+}
+
+/* While a scan runs the header counts switches off. The map itself is
+   only refreshed every REFRESH_MS, which is no use to somebody
+   watching a scan that may last minutes. */
+let scanWatcher = null;
+
+function watchScan() {
+  if (scanWatcher) return;
+  scanWatcher = setInterval(async () => {
+    let status;
+    try {
+      status = await (await fetch("/api/status")).json();
+    } catch (e) {
+      return; // the service is restarting; the next tick will tell
+    }
+    topology.scanning = status.scanning;
+    topology.scan_done = status.scan_done;
+    topology.scan_total = status.scan_total;
+    topology.scan_over_budget = status.scan_over_budget;
+    updateScanStatus();
+    if (!status.scanning) {
+      clearInterval(scanWatcher);
+      scanWatcher = null;
+      els.rescan.disabled = false;
+      isScanning = false;
+      await loadTopology();
+    }
+  }, 2000);
 }
 
 /* ---------- data loading and rendering ---------- */
@@ -310,6 +374,10 @@ async function loadTopology() {
   renderSidebar();
   renderGraph();
   updateScanStatus();
+  // A scan the operator did not start is worth counting off too: the
+  // periodic one is when they are most likely to wonder why nothing
+  // has moved for ten minutes.
+  if (topology.scanning) watchScan();
   els.emptyState.classList.toggle("hidden", topology.switches.length > 0);
 }
 
@@ -328,8 +396,9 @@ function switchHasAlarm(ip) {
   );
 }
 
-function li(main, sub, dotClass, onClick, searchText, cssClass) {
+function li(main, sub, dotClass, onClick, searchText, cssClass, title) {
   const item = document.createElement("li");
+  if (title) item.title = title;
   if (dotClass) {
     const dot = document.createElement("span");
     dot.className = "dot " + dotClass;
@@ -361,7 +430,15 @@ function renderSidebar() {
         // same rule as the map caption: no address over the address
         sw.named === false ? sw.model || "" : sw.ip,
         sw.ping_up ? "up" : "down",
-        () => focusNode("sw:" + sw.ip)
+        () => focusNode("sw:" + sw.ip),
+        undefined,
+        // greyed the way an old host record is: the switch is there,
+        // its numbers are from the last poll that finished
+        sw.over_budget ? "stale" : "",
+        sw.over_budget_scans >= 2
+          ? fmt("staleSwitchScans", { n: sw.over_budget_scans }) +
+            " · " + t("dataFrom") + " " + fmtTime(sw.polled_at)
+          : ""
       )
     )
   );
@@ -932,7 +1009,12 @@ function showDetails(nodeId) {
     if (!sw) return;
     const loop = sw.loop || {};
     html = `<h3>${sw.name}</h3>
-      ${loop.supported === false
+      ${sw.over_budget
+        ? `<p class="hint">${fmt(
+            sw.over_budget_scans >= 2 ? "staleSwitchHint" : "overBudgetHint",
+            { time: fmtTime(sw.polled_at), n: sw.over_budget_scans }
+          )}</p>`
+        : ""}${loop.supported === false
         ? `<p class="hint">${fmt("loopUnsupportedHint", {
             oid: loop.sys_object_id || "—",
           })}</p>`
@@ -941,6 +1023,13 @@ function showDetails(nodeId) {
       <dt>${t("bridgeMac")}</dt><dd>${sw.mac || "—"}</dd>
       <dt>${t("portsUpTotal")}</dt><dd>${sw.ports_up} / ${sw.ports_total}</dd>
       <dt>${t("lastReply")}</dt><dd>${fmtTime(sw.last_ping_ok)}</dd>
+      ${sw.over_budget
+        ? `<dt>${t("dataFrom")}</dt><dd>${fmtTime(sw.polled_at)}${
+            sw.over_budget_scans >= 2
+              ? " · " + fmt("staleSwitchScans", { n: sw.over_budget_scans })
+              : ""
+          }</dd>`
+        : ""}
       <dt>${t("loopDetection")}</dt><dd${
         loop.status === "loop" ? ' class="loop-alarm"' : ""
       } title="${loopCardTitle(loop)}">${loopCardLine(loop)}</dd>
@@ -1422,6 +1511,10 @@ function renderPorts(data) {
   });
   markSilentColumns(data.columns);
   const limits = data.thresholds || {};
+  // Past this age a rate is shown dimmed with its age beside it; past
+  // `hide_after_seconds` the server withholds the number itself. Both
+  // come from the service, which is where the intervals live.
+  const staleAfter = (data.rates || {}).stale_after_seconds ?? Infinity;
   let highlighted = null;
   // physical ports only; the server puts active ones first
   const rows = sortPorts(data.ports.filter((p) => p.is_physical)).map((p) => {
@@ -1436,6 +1529,36 @@ function renderPorts(data) {
         if (cls) cell.className = cls;
         cell.append(content);
         tr.append(cell);
+      };
+      // A rate cell carries its own age. The number is real but was
+      // measured a while ago — the counters cycle skipped this switch,
+      // or it is busy being scanned — and dropping it would draw the
+      // same "—" as a column the agent never answers. Those two say
+      // very different things about a switch.
+      const rateTd = (value, cls) => {
+        const stale =
+          p.rate_age_seconds != null && p.rate_age_seconds >= staleAfter;
+        // expired: a dash that has something to say, so it asks to be
+        // hovered — a dash with nothing behind it does not
+        const expired = value == null && p.rate_age_seconds != null;
+        td(
+          fmtRate(value),
+          (cls || "") +
+            (stale && value != null ? " stale-rate" : "") +
+            (expired ? " rate-expired" : "")
+        );
+        const cell = tr.lastChild;
+        if (expired) {
+          // measured once, too long ago to show: say when, do not
+          // leave a bare dash that reads as "never polled"
+          cell.title = fmt("rateTooOld", {
+            when: fmtAge(p.rate_age_seconds),
+          });
+        } else if (stale) {
+          cell.title = fmt("rateMeasured", {
+            when: fmtAge(p.rate_age_seconds),
+          });
+        }
       };
       let name = p.name;
       if (p.lag) name += " (" + p.lag + ")";
@@ -1535,14 +1658,14 @@ function renderPorts(data) {
       dot.className = "dot " + (p.oper_up ? "up" : "down");
       td(dot);
       td(p.oper_up && p.speed_mbps ? fmtSpeed(p.speed_mbps) : "—");
-      td(fmtRate(p.in_mbps), "num");
-      td(fmtRate(p.out_mbps), "num");
+      rateTd(p.in_mbps, "num");
+      rateTd(p.out_mbps, "num");
       // damaged frames are a fault, discards are usually filtering
       const overErr = p.errors_per_min > (limits.errors_per_minute ?? Infinity);
       const overDisc =
         p.discards_per_min > (limits.discards_per_minute ?? Infinity);
-      td(fmtRate(p.errors_per_min), "num" + (overErr ? " over-error" : ""));
-      td(fmtRate(p.discards_per_min), "num" + (overDisc ? " over-discard" : ""));
+      rateTd(p.errors_per_min, "num" + (overErr ? " over-error" : ""));
+      rateTd(p.discards_per_min, "num" + (overDisc ? " over-discard" : ""));
       loopCell(tr, p.loop, data.loop_detection);
       return tr;
     });
@@ -1864,7 +1987,10 @@ function renderStp() {
       tr.append(td);
     });
     tbody.append(tr);
-    if (sw.blocking_ports && sw.blocking_ports.length) {
+    // Only for a switch whose tree we say is operating. "BLOCKING" is
+    // a statement about a spanning tree, and printing one under a row
+    // of dashes that says there is no tree contradicts it in place.
+    if (sw.operating && sw.blocking_ports && sw.blocking_ports.length) {
       const note = document.createElement("tr");
       const td = document.createElement("td");
       td.colSpan = 8;
@@ -1882,6 +2008,21 @@ function renderStp() {
   scroller.className = "table-scroll";
   scroller.append(table);
   body.append(scroller);
+  // Switches that answer dot1dStp* and name no root. They are not a
+  // tree of their own — counting them as one turned three RouterOS
+  // boxes into a second spanning tree called "unknown" — but they must
+  // not quietly disappear from the panel either.
+  const noRoot = (data.verdict || {}).rootless || [];
+  if (noRoot.length) {
+    const byIp = Object.fromEntries(data.switches.map((sw) => [sw.ip, sw]));
+    const line = document.createElement("p");
+    line.className = "hint";
+    line.textContent =
+      fmt("stpRootless", {
+        switches: noRoot.map((ip) => (byIp[ip] || {}).name || ip).join(", "),
+      });
+    body.append(line);
+  }
 }
 
 async function toggleStp() {
@@ -1966,16 +2107,7 @@ async function rescan() {
   isScanning = true;
   updateScanStatus();
   await fetch("/api/scan", { method: "POST" });
-  // poll the status until the scan finishes
-  const timer = setInterval(async () => {
-    const status = await (await fetch("/api/status")).json();
-    if (!status.scanning) {
-      clearInterval(timer);
-      els.rescan.disabled = false;
-      isScanning = false;
-      await loadTopology();
-    }
-  }, 1500);
+  watchScan();
 }
 
 els.search.addEventListener("input", applySearchFilter);

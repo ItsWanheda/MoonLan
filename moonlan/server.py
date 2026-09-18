@@ -149,6 +149,9 @@ def get_collector() -> SnmpCollector:
             timeout=config.snmp.timeout,
             retries=config.snmp.retries,
             retries_on_break=config.snmp.retries_on_break,
+            per_host=config.switch_snmp,
+            dead_oid_strikes=config.snmp.dead_oid_strikes,
+            dead_oid_cooldown_scans=config.snmp.dead_oid_cooldown_scans,
         )
     return _collector
 
@@ -159,29 +162,85 @@ async def _collect_locked(collector: SnmpCollector, ip: str) -> SwitchData:
         return await collector.collect(ip)
 
 
-async def _counters_locked(collector: SnmpCollector, ip: str):
-    """A counters poll, but only if the switch is free right now.
+async def _collect_within_budget(
+    collector: SnmpCollector, ip: str, budget: float
+) -> SwitchData | None:
+    """A full poll, or None when it ran past its budget.
 
-    Waiting would pile cycles up behind a slow scan; a skipped cycle
-    costs one point of history and says so.
+    `snmp.timeout` bounds one request. A poll is a dozen walks of a
+    dozen requests each, so an agent that answers everything slowly
+    stays inside every single timeout and still takes eight minutes —
+    and `gather` waits for the last one. Nothing here makes that agent
+    faster; it only stops it from deciding when the rest of the
+    network gets its map.
+    """
+    started = time.monotonic()
+    try:
+        data = await asyncio.wait_for(
+            _collect_locked(collector, ip), budget
+        )
+        # How long a complete poll really takes, so budgets can be set
+        # from measurements instead of guesses
+        data.poll_seconds = time.monotonic() - started
+        return data
+    except asyncio.TimeoutError:
+        log.warning(
+            "%s did not finish its poll within the %.0f s budget (gave up "
+            "after %.0f s) — it is left out of this scan, which is not the "
+            "same as not answering: see snmp.host_budget_seconds",
+            ip, budget, time.monotonic() - started,
+        )
+        return None
+    finally:
+        state.host_polled()
+
+
+def _counters_wait_budget() -> float:
+    """How long a counters cycle waits for a switch the scan is holding.
+
+    Long enough to outlast a normal scan of one host, short enough that
+    cycles never pile up: half an interval, capped at twenty seconds.
+    """
+    return min(max(config.counters_interval_seconds, 2) / 2, 20)
+
+
+async def _counters_locked(collector: SnmpCollector, ip: str):
+    """A counters poll, waiting briefly if the scan holds this switch.
+
+    Giving up the moment the lock was taken had a consequence nobody
+    intended: a scan holds a host for as long as its budget allows, so
+    any budget of two intervals or more guaranteed that this host
+    missed cycles — and before v0.6.13 a missed cycle meant its whole
+    panel went to dashes. A short wait catches the common case where
+    the scan is nearly done with it.
+
+    Queueing indefinitely is still not an option: cycles would pile up
+    behind a slow host. Past the wait it is skipped, as before, and
+    says so.
     """
     lock = host_lock(ip)
-    if lock.locked():
+    wait = _counters_wait_budget()
+    try:
+        await asyncio.wait_for(lock.acquire(), wait)
+    except asyncio.TimeoutError:
         log.info(
-            "%s is busy with the topology scan — skipping this counters "
-            "cycle rather than queueing behind it", ip,
+            "%s is still busy with the topology scan after %.0f s — "
+            "skipping this counters cycle rather than queueing behind it. "
+            "Its rates stay on the panel with their age; a poll budget at "
+            "or above twice counters_interval_seconds makes this happen "
+            "after every scan.", ip, wait,
         )
         return {}, {}, {}, None
-    sw = switch_data.get(ip)
-    # The interface table from the last scan: without it a truncated
-    # column has no way of knowing which ports it failed to reach.
-    # Real interfaces only — a negative ifIndex is one of our own
-    # synthetic aggregates, which SNMP has never heard of.
-    expected = (
-        {p.if_index for p in sw.ports.values() if p.if_index > 0}
-        if sw else None
-    )
-    async with lock:
+    try:
+        sw = switch_data.get(ip)
+        # The interface table from the last scan: without it a truncated
+        # column has no way of knowing which ports it failed to reach.
+        # Real interfaces only — a negative ifIndex is one of our own
+        # synthetic aggregates, which SNMP has never heard of.
+        expected = (
+            {p.if_index for p in sw.ports.values() if p.if_index > 0}
+            if sw else None
+        )
         samples, oper, columns = await counters.collect_samples(
             collector, ip, expected
         )
@@ -195,6 +254,8 @@ async def _counters_locked(collector: SnmpCollector, ip: str):
                 sys_object_id=sw.sys_object_id,
             )
         return samples, oper, columns, loop
+    finally:
+        lock.release()
 
 
 async def run_scan() -> None:
@@ -202,15 +263,22 @@ async def run_scan() -> None:
     global first_scan_done, fdb_macs, prev_pseudo_ports
     if state.scanning:
         return
-    state.scanning = True
+    state.scan_started(len(config.switches))
+    over_budget: list[str] = []
     try:
         arp: dict[str, str] = {}
         if config.demo:
             collected = demo.demo_network()
         else:
             collector = get_collector()
+            collector.begin_scan_cycle()
             results = await asyncio.gather(
-                *(_collect_locked(collector, ip) for ip in config.switches),
+                *(
+                    _collect_within_budget(
+                        collector, ip, config.host_budget(ip)
+                    )
+                    for ip in config.switches
+                ),
                 return_exceptions=True,
             )
             collected = []
@@ -225,6 +293,29 @@ async def run_scan() -> None:
                     )
                     collected.append(SwitchData(ip=ip))
                     continue
+                if result is None:
+                    # Over budget. Not an answer, and not a silence
+                    # either: the last reading that did arrive is kept
+                    # and dated, so the branch behind this switch stays
+                    # on the map instead of vanishing every cycle.
+                    previous = switch_data.get(ip)
+                    streak = (
+                        previous.over_budget_scans + 1 if previous else 1
+                    )
+                    if previous is not None and previous.reachable:
+                        previous.over_budget = True
+                        previous.over_budget_scans = streak
+                        collected.append(previous)
+                    else:
+                        # Nothing to keep — this one has never been read
+                        # in full. The streak still counts: a switch
+                        # that has never finished a poll is further from
+                        # fine than one whose data is merely old.
+                        collected.append(
+                            SwitchData(ip=ip, over_budget=True,
+                                       over_budget_scans=streak)
+                        )
+                    continue
                 collected.append(result)
             if config.routers:
                 arp = await collect_arp(collector)
@@ -235,6 +326,9 @@ async def run_scan() -> None:
                 mac = ip_to_mac.get(sw.ip)
                 if mac:
                     sw.own_macs.add(mac)
+        # Demo mode marks a switch over budget too, so the list comes
+        # from the data rather than from the polling loop
+        over_budget = [sw.ip for sw in collected if sw.over_budget]
         for sw in collected:
             previous = switch_data.get(sw.ip)
             if previous is not None and sw.loop_detection is None:
@@ -246,6 +340,16 @@ async def run_scan() -> None:
                 # own bookkeeping.
                 sw.loop_detection = previous.loop_detection
             switch_data[sw.ip] = sw
+        # The cross-switch spanning-tree test comes BEFORE the map is
+        # built, because the map reads its results. A root recognised
+        # only because its neighbours follow its address (v0.6.11) has
+        # `operating` and `confirmed_root` set by judge_network — and
+        # judge_network used to run after build_topology, so the node
+        # was drawn with a plain border, no root caption and its
+        # blocking ports ignored, while the STP panel two panels away
+        # called it the root. One order of operations, three wrong
+        # fields.
+        _judge_stp(collected)
         # A MAC has to be seen more than once before it counts as a
         # device (unless ARP vouches for it); the verdict is needed
         # before the topology so that unconfirmed addresses stay out of
@@ -436,10 +540,56 @@ async def run_scan() -> None:
         if config.demo:
             await run_ping()  # set the switches' ping state right away
 
+        # A switch that ran out of budget is not reported either way.
+        # "Missed an SNMP poll" is a statement about the switch; this
+        # one is a statement about us, and switch_down must not be
+        # raised on the strength of it — nor cleared, which would be
+        # just as much of an invention.
         await alarm_engine.on_scan(
-            {sw.ip: sw.reachable for sw in collected},
+            {sw.ip: sw.reachable for sw in collected if not sw.over_budget},
             {sw.ip: sw.sys_name or sw.ip for sw in collected},
         )
+        # Every single switch silent at once is not ten faults, it is
+        # one. The day `community: public` went back into the config,
+        # the map emptied and the log said "does not respond to SNMP"
+        # ten times over — true, unhelpful, and identical to what a
+        # power cut would have printed.
+        answered = [sw for sw in collected if sw.reachable]
+        if collected and not answered and not over_budget:
+            log.error(
+                "All %d configured switch(es) are unreachable at once. One "
+                "common cause is likelier than %d simultaneous faults: "
+                "snmp.community (SNMPv2c does not answer a wrong one at "
+                "all — silence is what a mismatch looks like), or the "
+                "network of this machine. `python -m moonlan.diag --walk "
+                "<switch> 1.3.6.1.2.1.1.5` says which.",
+                len(collected), len(collected),
+            )
+        # A switch that keeps answering and keeps not finishing. It is
+        # on the map, from a reading that may be hours old, and until
+        # now the only way to learn that was to read the journal.
+        stale_switches = {
+            sw.ip: {
+                "scans": sw.over_budget_scans,
+                "polled_at": sw.polled_at,
+            }
+            for sw in collected
+            if sw.over_budget
+            and sw.over_budget_scans >= max(config.stale_switch_scans, 1)
+        }
+        await alarm_engine.on_stale_switches(
+            stale_switches,
+            {sw.ip: sw.sys_name or sw.ip for sw in collected},
+        )
+        if over_budget:
+            log.warning(
+                "Scan finished without %d of %d switch(es): %s did not "
+                "answer in full inside the budget. The map below is "
+                "everything else, and their last readings are kept as "
+                "they were.",
+                len(over_budget), len(config.switches),
+                ", ".join(over_budget),
+            )
         await alarm_engine.clear_suppressed(
             _suppressed_bridges(bridges, bridge_rows)
         )
@@ -464,7 +614,7 @@ async def run_scan() -> None:
             len(switches), len(links), len(hosts),
         )
     finally:
-        state.scanning = False
+        state.scan_ended(over_budget)
 
 
 def _lldp_rows(collected: list[SwitchData]) -> list[dict]:
@@ -492,6 +642,25 @@ def _lldp_rows(collected: list[SwitchData]) -> list[dict]:
     return rows
 
 
+def _per_switch_stp(collected: list[SwitchData]) -> dict:
+    """ip -> StpData for every switch that answered."""
+    return {
+        sw.ip: sw.stp for sw in collected
+        if sw.reachable and sw.stp is not None
+    }
+
+
+def _judge_stp(collected: list[SwitchData]) -> None:
+    """The cross-switch test, run once the whole network is in hand.
+
+    A switch that names itself root is believed only when a neighbour
+    names it too (see stp.judge_network). It mutates the StpData
+    objects in place, so everything downstream — the map, the panel,
+    the alarms — sees the same verdict, provided it runs first.
+    """
+    stp.judge_network(_per_switch_stp(collected))
+
+
 def _stp_report(
     collected: list[SwitchData], trunk_names: dict[str, list[str]] | None = None
 ) -> dict:
@@ -503,13 +672,7 @@ def _stp_report(
     0 — believing that is how five disabled switches turn into five
     root bridges (see moonlan/stp.py).
     """
-    per_switch = {
-        sw.ip: sw.stp for sw in collected if sw.reachable and sw.stp is not None
-    }
-    # The cross-switch test runs once the whole network is in hand: a
-    # switch that names itself root is believed only when a neighbour
-    # names it too (see stp.judge_network).
-    stp.judge_network(per_switch)
+    per_switch = _per_switch_stp(collected)
     verdict = stp.network_verdict(per_switch)
     trunk_names = trunk_names or {}
     switches = []
@@ -559,6 +722,9 @@ def _stp_report(
                 p.name or str(p.bridge_port) for p in data.blocking_ports()
             ],
             "trunk_vlans": trunk_vlans,
+            # answers dot1dStp* and names no root: shown, but not
+            # counted as a tree of its own
+            "rootless": ip in verdict.get("rootless", ()),
         })
     return {"verdict": verdict, "switches": switches}
 
@@ -1441,8 +1607,16 @@ async def periodic_resource_log() -> None:
             pass  # not a Linux /proc — skip silently
 
 
-def _rates_max_age() -> float:
-    return max(config.counters_interval_seconds, 5) * 3
+def _rates_hide_age() -> float:
+    """Past this age a measured rate stops being shown at all.
+
+    It used to be three counters intervals, and anything older was
+    dropped from the answer — which drew the same "—" as a column the
+    agent never answered. Half an hour is the point at which a rate
+    really is a memory rather than a measurement; everything younger is
+    shown with its age next to it.
+    """
+    return max(config.stale_rate_hide_minutes, 0.0) * 60
 
 
 def _refresh_link_lag(link: dict) -> None:
@@ -1490,7 +1664,7 @@ def _link_load(link: dict) -> dict | None:
         sw = switch_data.get(link[side])
         if sw is None:
             continue
-        rates = counter_store.current(link[side], max_age=_rates_max_age())
+        rates = counter_store.current(link[side], max_age=_rates_hide_age())
         if not rates:
             continue
         names = lag.get(f"{side}_members") or [link[f"{side}_port"]]
@@ -1508,7 +1682,15 @@ def _link_load(link: dict) -> dict | None:
             continue  # this side knows nothing; try the other one
         if flip:  # B's in is A's out and vice versa
             in_mbps, out_mbps = out_mbps, in_mbps
-        return {"in_mbps": _round(in_mbps), "out_mbps": _round(out_mbps)}
+        # The oldest of the measurements this number is made of: an
+        # edge label is as fresh as its stalest member, and the tooltip
+        # has to be able to say so.
+        age = round(max(time.time() - r.ts for r in found))
+        return {
+            "in_mbps": _round(in_mbps),
+            "out_mbps": _round(out_mbps),
+            "age_seconds": age,
+        }
     return None
 
 
@@ -1546,6 +1728,34 @@ def _log_config() -> None:
         )
     else:
         log.info("%s", summary)
+    for problem in report.problems:
+        log.warning("config.yaml switches: %s", problem)
+    starved = config.starved_counters()
+    if starved:
+        log.warning(
+            "Poll budget at or above twice counters_interval_seconds "
+            "(%d s) on %d switch(es): %s. While a scan holds one of "
+            "these, its counters cycle is skipped, so its rates will "
+            "visibly age between scans — the panel shows them with their "
+            "age rather than hiding them. Lower host_budget_seconds for "
+            "those devices, or raise counters_interval_seconds.",
+            config.counters_interval_seconds, len(starved),
+            ", ".join(f"{ip} ({budget} s)" for ip, budget in starved),
+        )
+    custom = config.custom_switches()
+    if custom:
+        log.info(
+            "SNMP settings of their own on %d of %d switch(es): %s. "
+            "Everything else is inherited from the snmp: section; "
+            "python -m moonlan.diag --config prints which is which.",
+            len(custom), len(config.switches),
+            ", ".join(
+                f"{ip} ("
+                + ", ".join(sorted(config.switch_snmp[ip].explicit))
+                + ")"
+                for ip in custom
+            ),
+        )
 
 
 async def purge_invalid_macs() -> None:
@@ -1682,7 +1892,11 @@ async def api_switch_ports(ip: str) -> dict:
     sw = switch_data.get(ip)
     if sw is None:
         return {"switch": ip, "name": ip, "ports": []}
-    rates = counter_store.current(ip, max_age=_rates_max_age())
+    # Everything measured, however old. What is too old to show is
+    # decided below, once, and said out loud rather than by omission.
+    rates = counter_store.current(ip)
+    hide_age = _rates_hide_age()
+    now = time.time()
     db_hosts = await asyncio.to_thread(db.hosts_by_mac)
     host_counts: Counter = Counter()
     monitored_counts: Counter = Counter()
@@ -1710,7 +1924,9 @@ async def api_switch_ports(ip: str) -> dict:
         )
     ports = []
     for p in sw.ports.values():
-        r = rates.get(p.if_index)
+        r, age = counters.rate_for_display(
+            rates, p.if_index, now, hide_age
+        )
         name = p.name or str(p.if_index)
         ports.append({
             "if_index": p.if_index,
@@ -1724,6 +1940,11 @@ async def api_switch_ports(ip: str) -> dict:
             "out_mbps": _round(r.out_mbps if r else None),
             "errors_per_min": _round(r.errors_per_min if r else None),
             "discards_per_min": _round(r.discards_per_min if r else None),
+            # When the numbers above were measured, and how long ago.
+            # None in both means this port has never been measured at
+            # all — the one case "—" is allowed to mean.
+            "rate_ts": None if age is None else rates[p.if_index].ts,
+            "rate_age_seconds": None if age is None else round(age),
             "hosts": host_counts.get(name, 0),
             "monitored_hosts": monitored_counts.get(name, 0),
             # MACs that look like damaged copies of a real one here
@@ -1760,6 +1981,14 @@ async def api_switch_ports(ip: str) -> dict:
         # …and the same honesty about loop detection: which profile
         # answered, or that the model does not report it at all
         "loop_detection": _loop_report(sw),
+        # When a measured rate stops being fresh (shown dimmed, with
+        # its age) and when it stops being shown at all. The panel
+        # needs both to tell "stale" from "never measured"; neither
+        # belongs hardcoded in the front end.
+        "rates": {
+            "stale_after_seconds": max(config.counters_interval_seconds, 5) * 3,
+            "hide_after_seconds": hide_age,
+        },
         # so the panel can colour the values it shows
         "thresholds": {
             "errors_per_minute": config.thresholds.errors_per_minute,
@@ -2028,6 +2257,51 @@ async def api_search(q: str = Query(default="")) -> dict:
     return {"query": q, "results": state.search(q)}
 
 
+@app.get("/api/skipped-oids")
+async def api_skipped_oids() -> dict:
+    """OIDs MoonLan has stopped asking for, and for how much longer.
+
+    The pause lives in the running process, so `diag --skipped` asks
+    the service rather than guessing: a separate CLI run has its own
+    collector and has never seen any of this.
+    """
+    collector = _collector
+    paused = collector.paused_oids() if collector is not None else []
+    return {
+        "strikes": config.snmp.dead_oid_strikes,
+        "cooldown_scans": config.snmp.dead_oid_cooldown_scans,
+        "polled": collector is not None,
+        "paused": paused,
+    }
+
+
+@app.get("/api/polling")
+async def api_polling() -> dict:
+    """When each switch was last polled in full, and how long it took.
+
+    A poll budget set by eye is a budget set wrong. These are the
+    numbers to set it from, and they live in this process, so
+    `diag --config` asks for them rather than guessing.
+    """
+    return {
+        "counters_interval_seconds": config.counters_interval_seconds,
+        "switches": [
+            {
+                "ip": ip,
+                "name": (sw.sys_name or ip) if sw else "",
+                "budget_seconds": config.host_budget(ip),
+                "polled_at": sw.polled_at if sw else 0.0,
+                "poll_seconds": round(sw.poll_seconds, 1) if sw else 0.0,
+                "over_budget_scans": sw.over_budget_scans if sw else 0,
+                "reachable": bool(sw and sw.reachable),
+            }
+            for ip, sw in (
+                (ip, switch_data.get(ip)) for ip in config.switches
+            )
+        ],
+    }
+
+
 @app.get("/api/status")
 async def api_status() -> dict:
     try:
@@ -2044,7 +2318,7 @@ async def api_status() -> dict:
         "last_scan_ok": state.last_scan_ok,
         "last_error": state.last_error,
         "last_error_ts": state.last_error_ts,
-        "scanning": state.scanning,
+        **state.scan_progress(),
         "uptime_hint": time.time(),
         "open_fds": open_fds,
         "rss_kb": rss_kb,

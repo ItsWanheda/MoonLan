@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 
 from . import lldp as lldp_mod
+from . import pinger
 from . import stp as stp_mod
 from .snmpval import as_octets, is_no_such
 
@@ -72,6 +74,89 @@ PHYSICAL_IF_TYPES = {IF_TYPE_ETHERNET, 62, 69, 117}
 # that stopped answering mid-table is busy, not broken; asking again
 # immediately gets the same silence.
 RESUME_PAUSE = 0.2
+
+
+# What `last_walk_status` reports for a walk that was never sent. It
+# has to read as "no answer", not as "an empty table": the difference
+# between those two is the whole point of WalkStatus.
+SKIPPED_ERROR = (
+    "not asked: this OID has answered nothing but timeouts on this host"
+)
+
+
+def is_timeout(error: str) -> bool:
+    """True for the one failure the dead-OID rule acts on.
+
+    pysnmp reports it as "No SNMP response received before timeout".
+    An agent error, a malformed OID, a table that ends early — none of
+    those mean the agent will go on saying nothing, and none of them
+    cost a full timeout budget to ask again.
+    """
+    return "timeout" in error.lower()
+
+
+@dataclass
+class DeadOid:
+    """How one (host, OID) pair has been behaving."""
+
+    strikes: int = 0     # walks in a row with no rows and a timeout
+    skip_until: int = 0  # scan cycle at which it is tried again
+
+
+# Objects every SNMP agent has to implement. Silence on one of these
+# is never "the agent does not have it".
+MANDATORY_OIDS = frozenset({
+    OID_SYS_NAME, OID_SYS_DESCR, OID_SYS_OBJECT_ID,
+})
+
+# What silence on an OID turned out to mean
+SILENCE_COMMUNITY = "community"    # answers ping, says nothing to SNMP
+SILENCE_UNREACHABLE = "unreachable"  # says nothing to anything
+SILENCE_OID = "oid"                # the agent is alive; this OID is not
+
+
+async def diagnose_silence(
+    collector, host: str, oid: str = ""
+) -> tuple[str, str]:
+    """Why an OID returned nothing: (verdict, a sentence for a human).
+
+    SNMPv2c does not answer a wrong community string at all. From the
+    outside that is indistinguishable from an agent that does not
+    implement the object — and MoonLan used to print exactly that:
+    "the subtree is empty, or the agent does not implement it". Both
+    halves were wrong on a switch that pings in 3 ms, implements
+    sysName and works perfectly; somebody had put `community: public`
+    back into the config. The answer was not merely incomplete, it
+    pointed away from the cause.
+
+    So: ask for sysDescr, which every agent must implement, and ping
+    the host. Silent SNMP on a host that answers ICMP is a community
+    string or a disabled agent, not a missing OID. Asking about an
+    object that is itself mandatory skips the redundant probe — its
+    silence already carries the same weight.
+    """
+    if oid not in MANDATORY_OIDS:
+        probe = await collector._get(host, OID_SYS_DESCR)
+        if probe is not None:
+            return SILENCE_OID, (
+                f"the agent is alive and answers sysDescr "
+                f"({str(probe)[:60]!r}), so this OID really is empty or "
+                f"not implemented on it"
+            )
+    alive = await pinger.ping(host)
+    if alive:
+        return SILENCE_COMMUNITY, (
+            "the host answers ping but says nothing to sysDescr either — "
+            "most likely the community string does not match, or SNMP is "
+            "switched off on it. An agent that does not implement an OID "
+            "does not look like this: it answers, and says it has no such "
+            "object"
+        )
+    return SILENCE_UNREACHABLE, (
+        "the host answers neither SNMP nor ping — it is not reachable "
+        "from here at all, which is a network question before it is an "
+        "SNMP one"
+    )
 
 
 @dataclass
@@ -142,6 +227,18 @@ class SwitchData:
     # counters loop rather than by the scan: a loop is an incident,
     # and ten minutes is too long to hear about one.
     loop_detection: object | None = None
+    # When this reading was taken, and whether it is a reading at all.
+    # A switch that did not finish inside its budget keeps the last
+    # data it did produce, and both fields say so — "the map is from
+    # 15:58" is a different statement from "the map is from now".
+    polled_at: float = 0.0
+    over_budget: bool = False
+    # How long the last complete poll took, and how many scans in a row
+    # have ended without one. A switch that answers and never finishes
+    # is a third state next to "answering" and "down", and it needs its
+    # own numbers to be said out loud.
+    poll_seconds: float = 0.0
+    over_budget_scans: int = 0
 
 
 def _fmt_mac(raw: bytes) -> str:
@@ -367,6 +464,9 @@ class SnmpCollector:
         timeout: int = 2,
         retries: int = 1,
         retries_on_break: int = 2,
+        per_host: dict | None = None,
+        dead_oid_strikes: int = 0,
+        dead_oid_cooldown_scans: int = 30,
     ):
         self._community = CommunityData(community, mpModel=1)  # v2c
         self._timeout = timeout
@@ -379,12 +479,118 @@ class SnmpCollector:
         # confident 0.0.
         self._walk_status: dict[tuple[str, str], WalkStatus] = {}
         self._retries_on_break = retries_on_break
+        # host -> config.HostSnmp for the devices that were given
+        # settings of their own. Everything else uses the arguments
+        # above, which are the global `snmp:` section.
+        self._per_host = dict(per_host or {})
+        self._communities: dict[str, CommunityData] = {}
+        # (host, oid) -> the dead-OID record for it, and the scan
+        # cycle counter the cooldown is measured in
+        self._dead_oids: dict[tuple[str, str], DeadOid] = {}
+        self._cycle = 0
+        # 0 disables the rule: every OID is asked for every time
+        self._dead_oid_strikes = dead_oid_strikes
+        self._dead_oid_cooldown = dead_oid_cooldown_scans
+
+    def begin_scan_cycle(self) -> None:
+        """One more scan has started; the cooldown is counted in these."""
+        self._cycle += 1
+
+    def paused_oids(self) -> list[dict]:
+        """(host, OID) pairs nobody is asking for right now."""
+        return [
+            {
+                "host": host,
+                "oid": oid,
+                "strikes": record.strikes,
+                "cycles_left": record.skip_until - self._cycle,
+            }
+            for (host, oid), record in sorted(self._dead_oids.items())
+            if record.skip_until > self._cycle
+        ]
+
+    def _skipping(self, host: str, oid: str) -> bool:
+        """Is this OID on pause — and, if the pause is over, say so.
+
+        The resumption is logged as loudly as the pause. An operator
+        looking at a gap in the data has to be able to tell "the device
+        does not report this" from "MoonLan stopped asking", and that
+        means both edges are in the log.
+        """
+        record = self._dead_oids.get((host, oid))
+        if record is None or not record.skip_until:
+            return False
+        if record.skip_until > self._cycle:
+            return True
+        log.info(
+            "%s: asking for %s again after %d scan(s) of silence — the "
+            "firmware may have learned to answer it",
+            host, oid, self._dead_oid_cooldown,
+        )
+        record.skip_until = 0
+        record.strikes = 0
+        return False
+
+    def _note_walk_outcome(
+        self, host: str, oid: str, status: "WalkStatus"
+    ) -> None:
+        """Count the one outcome worth giving up on.
+
+        No rows AND a timeout: the agent does not implement the table
+        and cannot say so, so every cycle spends the whole retry budget
+        to learn nothing. Anything else resets the count.
+        """
+        key = (host, oid)
+        if not (status.rows == 0 and is_timeout(status.error)):
+            self._dead_oids.pop(key, None)
+            return
+        if not self._dead_oid_strikes:
+            return
+        record = self._dead_oids.setdefault(key, DeadOid())
+        record.strikes += 1
+        if record.strikes < self._dead_oid_strikes or record.skip_until:
+            return
+        record.skip_until = self._cycle + self._dead_oid_cooldown
+        log.warning(
+            "%s: walk of %s has returned no rows and timed out %d time(s) "
+            "in a row — not asking for it again for %d scan(s). The data "
+            "is missing because MoonLan stopped asking, not because the "
+            "device denies having it.",
+            host, oid, record.strikes, self._dead_oid_cooldown,
+        )
+
+    def _community_for(self, host: str) -> CommunityData:
+        """The community string this host answers to.
+
+        A parc assembled over years is not one community string. The
+        object is cached because pysnmp derives keys from it.
+        """
+        settings = self._per_host.get(host)
+        if settings is None or settings.community == str(
+            self._community.communityName
+        ):
+            return self._community
+        cached = self._communities.get(host)
+        if cached is None:
+            cached = CommunityData(settings.community, mpModel=1)
+            self._communities[host] = cached
+        return cached
+
+    def _breaks_for(self, host: str) -> int:
+        settings = self._per_host.get(host)
+        return (
+            settings.retries_on_break if settings is not None
+            else self._retries_on_break
+        )
 
     async def _target(self, host: str) -> UdpTransportTarget:
         target = self._targets.get(host)
         if target is None:
+            settings = self._per_host.get(host)
+            timeout = settings.timeout if settings else self._timeout
+            retries = settings.retries if settings else self._retries
             target = await UdpTransportTarget.create(
-                (host, 161), timeout=self._timeout, retries=self._retries
+                (host, 161), timeout=timeout, retries=retries
             )
             self._targets[host] = target
         return target
@@ -403,7 +609,7 @@ class SnmpCollector:
         try:
             error_ind, error_status, _, var_binds = await get_cmd(
                 self._engine,
-                self._community,
+                self._community_for(host),
                 await self._target(host),
                 ContextData(),
                 ObjectType(ObjectIdentity(oid)),
@@ -435,7 +641,7 @@ class SnmpCollector:
         """
         return walk_cmd(
             self._engine,
-            self._community,
+            self._community_for(host),
             await self._target(host),
             ContextData(),
             ObjectType(ObjectIdentity(start)),
@@ -468,6 +674,12 @@ class SnmpCollector:
         base = tuple(int(x) for x in oid.split("."))
         status = WalkStatus(oid=oid)
         self._walk_status[(host, oid)] = status
+        if self._skipping(host, oid):
+            # Not sent, and not reported as an empty table either: the
+            # caller sees the same "no answer" it would see from a walk
+            # that failed, which is exactly what this is.
+            status.error = SKIPPED_ERROR
+            return
         start = oid
         last_oid: tuple[int, ...] | None = None
 
@@ -483,6 +695,7 @@ class SnmpCollector:
                     "%s: walk of %s could not be started (%s)",
                     host, start, exc,
                 )
+                self._note_walk_outcome(host, oid, status)
                 return
             left_subtree = False
             try:
@@ -512,9 +725,10 @@ class SnmpCollector:
             finally:
                 await objects.aclose()
             if left_subtree or not broke:
+                self._note_walk_outcome(host, oid, status)
                 return  # read to the end
             status.error = broke
-            if status.resumes >= self._retries_on_break or last_oid is None:
+            if status.resumes >= self._breaks_for(host) or last_oid is None:
                 status.truncated = status.rows > 0
                 status.last_oid = (
                     ".".join(str(part) for part in last_oid) if last_oid else ""
@@ -526,6 +740,7 @@ class SnmpCollector:
                     host, oid, status.rows, broke,
                     f", last OID {status.last_oid}" if status.last_oid else "",
                 )
+                self._note_walk_outcome(host, oid, status)
                 return
             status.resumes += 1
             # an agent that has run out of breath needs a moment before
@@ -550,11 +765,19 @@ class SnmpCollector:
 
     async def collect(self, host: str) -> SwitchData:
         """Full poll of a single switch."""
-        data = SwitchData(ip=host)
+        data = SwitchData(ip=host, polled_at=time.time())
 
         sys_name = await self._get(host, OID_SYS_NAME)
         if sys_name is None:
-            log.warning("Switch %s does not respond to SNMP", host)
+            # "Does not respond to SNMP" was the whole message, and it
+            # suggested nothing. The two causes need different people
+            # doing different things, and one probe tells them apart.
+            _verdict, why = await diagnose_silence(
+                self, host, OID_SYS_NAME
+            )
+            log.warning(
+                "Switch %s does not respond to SNMP: %s", host, why
+            )
             return data
 
         data.reachable = True
@@ -731,6 +954,7 @@ class SnmpCollector:
             lldp_mod.build_port_names(data.ports, phys_addr),
             set(data.ports),
             data.fdb,
+            port_to_ifindex,
         )
         # lldpLocPortDesc is an administrative port name on some agents
         # and a copy of ifDescr on others; only the former is worth

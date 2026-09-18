@@ -175,6 +175,12 @@ const I18N = {
     stpLastChange: "Since the last one",
     stpRootMark: "STP root",
     stpBlocking: "BLOCKING",
+    stpRootless:
+      "Answer dot1dStp* and name no root: {switches}. Their port tables "
+      + "are real, but they do not implement the objects that hold the "
+      + "root \u2014 RouterOS is one such agent. A bridge in a tree "
+      + "knows its root, so these are not counted as a spanning tree of "
+      + "their own, and they do not make the network fragmented.",
     stpBlockingHint:
       "Spanning tree holds this port in the blocking state: the link "
       + "exists but carries no user traffic. It is the standby path of "
@@ -233,6 +239,47 @@ const I18N = {
       + "Detection\u201d in the README for how to walk the private "
       + "branch and add a profile to config.yaml.",
     loopProfileHint: "profile {profile}, matched by {how}",
+    dataFrom: "Data from",
+    staleSwitchScans: "{n} scans running without a full poll",
+    staleSwitchHint:
+      "This switch has answered but not finished a full poll for {n} "
+      + "scans running, so everything on this card is from {time}. It is "
+      + "reachable \u2014 no \u201cswitch down\u201d alarm is raised for "
+      + "it \u2014 but its numbers have stopped moving. Its poll budget "
+      + "is too small for it: give it more time, or a shorter SNMP "
+      + "timeout of its own so the requests it never answers are given "
+      + "up on sooner. See switches: and snmp.host_budget_seconds in "
+      + "config.yaml.",
+    al_switch_stale: "Switch data not refreshing",
+    ageUnderMinute: "less than a minute ago",
+    ageMinutes: "{n} min ago",
+    ageHours: "{h} h ago",
+    ageHoursMinutes: "{h} h {n} min ago",
+    rateMeasured:
+      "Measured {when}. The counters cycle has not reached this switch "
+      + "since \u2014 it is being scanned, or it answers slowly. The "
+      + "number is real, only not current.",
+    rateTooOld:
+      "Last measured {when}. That is too long ago to show as a rate, so "
+      + "the cell is empty \u2014 but this port has been measured, "
+      + "which a port that never has never says. See "
+      + "stale_rate_hide_minutes in config.yaml.",
+    scanningProgress: "Scanning: {done} of {total}",
+    scanOverBudgetMark: "\u00b7 {n} switch(es) ran out of time",
+    scanOverBudgetHint:
+      "These switches did not finish answering inside their poll "
+      + "budget, so their part of the map is from an earlier scan: "
+      + "{switches}. They are not unreachable \u2014 they answer, only "
+      + "too slowly \u2014 and no alarm is raised for them. Their cards "
+      + "say when their data was taken.",
+    overBudgetHint:
+      "This switch did not finish answering inside its poll budget, so "
+      + "everything on this card is the last reading that did arrive, "
+      + "taken at {time}. That is not the same as the switch being "
+      + "unreachable \u2014 it answers, only too slowly \u2014 and no "
+      + "\u201cswitch down\u201d alarm is raised for it. Give it more "
+      + "time or a shorter SNMP timeout of its own: see "
+      + "snmp.host_budget_seconds in config.yaml.",
     portFlapping: "flapping",
     portFlappingHint:
       "The port has changed link state {n} time(s) inside the window; "
@@ -515,6 +562,12 @@ const I18N = {
     stpLastChange: "С последнего",
     stpRootMark: "корень STP",
     stpBlocking: "BLOCKING",
+    stpRootless:
+      "Отвечают на dot1dStp*, но корня не называют: {switches}. Таблицы "
+      + "портов у них настоящие, а объекты, где лежит корень, они не "
+      + "реализуют — так делает, например, RouterOS. Мост, участвующий "
+      + "в дереве, свой корень знает, поэтому отдельным деревом они не "
+      + "считаются и фрагментации не создают.",
     stpBlockingHint:
       "Остовное дерево держит этот порт в состоянии blocking: связь "
       + "есть, но пользовательский трафик через неё не идёт. Это "
@@ -573,6 +626,45 @@ const I18N = {
       + "обойти приватную ветку и добавить профиль в config.yaml, "
       + "написано в README, раздел «Loop Detection».",
     loopProfileHint: "профиль {profile}, опознан по {how}",
+    dataFrom: "Данные от",
+    staleSwitchScans: "{n} сканов подряд без полного опроса",
+    staleSwitchHint:
+      "Коммутатор отвечает, но не завершил полный опрос уже {n} сканов "
+      + "подряд, поэтому всё на этой карточке — от {time}. Он доступен, "
+      + "и тревога «коммутатор недоступен» по нему не поднимается, — но "
+      + "его показания перестали меняться. Бюджет опроса для него мал: "
+      + "дайте ему больше времени или свой, более короткий таймаут SNMP, "
+      + "чтобы запросы, на которые он не ответит, бросали раньше. См. "
+      + "switches: и snmp.host_budget_seconds в config.yaml.",
+    al_switch_stale: "Данные коммутатора не обновляются",
+    ageUnderMinute: "меньше минуты назад",
+    ageMinutes: "{n} мин назад",
+    ageHours: "{h} ч назад",
+    ageHoursMinutes: "{h} ч {n} мин назад",
+    rateMeasured:
+      "Измерено {when}. С тех пор цикл счётчиков до этого коммутатора не "
+      + "добрался — его опрашивает скан, либо он отвечает медленно. "
+      + "Значение настоящее, просто не сиюминутное.",
+    rateTooOld:
+      "Последний раз измерено {when}. Это слишком давно, чтобы "
+      + "показывать как скорость, поэтому ячейка пуста, — но порт "
+      + "измеряли, чего никогда не скажет порт, который не измеряли ни "
+      + "разу. См. stale_rate_hide_minutes в config.yaml.",
+    scanningProgress: "Идёт опрос: {done} из {total}",
+    scanOverBudgetMark: "\u00b7 не уложились: {n}",
+    scanOverBudgetHint:
+      "Эти коммутаторы не успели ответить целиком за отведённый бюджет "
+      + "опроса, поэтому их часть карты \u2014 с прошлого скана: "
+      + "{switches}. Недоступными они не считаются: они отвечают, просто "
+      + "медленно, и тревог по ним не поднимается. Время, на которое "
+      + "сняты их данные, написано в карточке каждого.",
+    overBudgetHint:
+      "Коммутатор не уложился в бюджет опроса, поэтому всё на этой "
+      + "карточке \u2014 последнее полученное измерение, снятое {time}. "
+      + "Это не то же самое, что «нет ответа»: он отвечает, просто "
+      + "слишком медленно, и тревога «коммутатор недоступен» по нему не "
+      + "поднимается. Дайте ему больше времени или свой, более короткий "
+      + "таймаут SNMP \u2014 см. snmp.host_budget_seconds в config.yaml.",
     portFlapping: "флаппинг",
     portFlappingHint:
       "Порт менял состояние линка {n} раз(а) за окно; последний переход "
