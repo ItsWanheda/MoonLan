@@ -634,7 +634,7 @@ Russian documentation:
 Clone the repository:
 
 ```bash
-git clone https://github.com/neonight-d/MoonLan.git
+git clone https://github.com/ItsWanheda/MoonLan.git
 cd MoonLan
 ```
 
