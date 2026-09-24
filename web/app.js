@@ -42,6 +42,12 @@ const els = {
   actionsBody: document.getElementById("actions-body"),
   actionsClose: document.getElementById("actions-close"),
   layoutStatus: document.getElementById("layout-status"),
+  hudSwitches: document.getElementById("hud-switches"),
+  hudHosts: document.getElementById("hud-hosts"),
+  hudLinks: document.getElementById("hud-links"),
+  hudUp: document.getElementById("hud-up"),
+  hudAlerts: document.getElementById("hud-alerts"),
+  hudScan: document.getElementById("hud-scan"),
   resetLayoutBtn: document.getElementById("reset-layout-btn"),
   langRu: document.getElementById("lang-ru"),
   langEn: document.getElementById("lang-en"),
@@ -1560,6 +1566,7 @@ function watchScan() {
     topology.scan_total = status.scan_total;
     topology.scan_over_budget = status.scan_over_budget;
     updateScanStatus();
+    updateMapHud();
     if (!status.scanning) {
       clearInterval(scanWatcher);
       scanWatcher = null;
@@ -1594,6 +1601,7 @@ async function loadTopology() {
   activeAlarms = alarms;
   renderBadge();
   renderSidebar();
+  updateMapHud();
   if (takeServerLayout(layout, askedAt) === "rebuild" && network) {
     rebuildGraph();
     // Started over from nothing, the same as a reset done here
@@ -1602,11 +1610,37 @@ async function loadTopology() {
     renderGraph();
   }
   updateScanStatus();
+  updateMapHud();
   // A scan the operator did not start is worth counting off too: the
   // periodic one is when they are most likely to wonder why nothing
   // has moved for ten minutes.
   if (topology.scanning) watchScan();
   els.emptyState.classList.toggle("hidden", topology.switches.length > 0);
+}
+
+function updateMapHud() {
+  const switches = topology.switches || [];
+  const hosts = topology.hosts || [];
+  const links = topology.links || [];
+  const switchUp = switches.filter((sw) => sw.ping_up).length;
+  const hostUp = hosts.filter((host) => host.ping_up).length;
+
+  els.hudSwitches.textContent = switches.length;
+  els.hudHosts.textContent = hosts.length;
+  els.hudLinks.textContent = links.length;
+  els.hudUp.textContent = switchUp + hostUp;
+  els.hudAlerts.textContent = activeAlarms.length;
+
+  const scanning = isScanning || topology.scanning;
+  els.hudScan.classList.toggle("hidden", !scanning);
+  if (scanning) {
+    els.hudScan.textContent = topology.scan_total > 0
+      ? fmt("scanningProgress", {
+          done: topology.scan_done || 0,
+          total: topology.scan_total,
+        })
+      : t("scanning");
+  }
 }
 
 function renderBadge() {
@@ -1707,6 +1741,7 @@ function renderSidebar() {
   els.unlocatedCount.textContent = unlocated.length;
   els.switchCount.textContent = topology.switches.length;
   els.hostCount.textContent = topology.hosts.length;
+  updateMapHud();
   applySearchFilter();
 }
 
