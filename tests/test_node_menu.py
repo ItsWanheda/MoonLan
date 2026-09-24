@@ -195,6 +195,18 @@ class _FakeRequest:
 class HealthEndpointTest(unittest.TestCase):
     """The health endpoint stays cheap and reports useful service state."""
 
+    def setUp(self):
+        self._saved = (
+            server.state.scanning, server.state.last_scan,
+            server.state.last_scan_ok, server.state.last_error,
+            server.state.last_error_ts,
+        )
+
+    def tearDown(self):
+        (server.state.scanning, server.state.last_scan,
+         server.state.last_scan_ok, server.state.last_error,
+         server.state.last_error_ts) = self._saved
+
     def test_health_is_liveness_only_and_uncached(self):
         server.state.scanning = True
         server.state.last_scan = 123.0
