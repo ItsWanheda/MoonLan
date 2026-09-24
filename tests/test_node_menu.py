@@ -16,6 +16,7 @@ Run with:  python -m unittest discover -s tests
 """
 
 import asyncio
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -218,10 +219,11 @@ class HealthEndpointTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["cache-control"], "no-store")
-        self.assertEqual(response.body.decode().count('"status":"ok"'), 1)
-        self.assertIn(b'"version":"0.7.4"', response.body)
-        self.assertIn(b'"scanning":true', response.body)
-        self.assertIn(b'"last_scan":123.0', response.body)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["version"], "0.7.4")
+        self.assertTrue(payload["scanning"])
+        self.assertEqual(payload["last_scan"], 123.0)
 
 
 class ServiceTest(unittest.TestCase):
