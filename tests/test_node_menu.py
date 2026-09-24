@@ -222,7 +222,11 @@ class HealthEndpointTest(unittest.TestCase):
         payload = json.loads(response.body)
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["version"], "0.7.4")
+        self.assertGreaterEqual(payload["uptime_seconds"], 0)
         self.assertTrue(payload["scanning"])
+        self.assertEqual(payload["scan_done"], 0)
+        self.assertEqual(payload["scan_total"], 0)
+        self.assertEqual(payload["scan_over_budget"], [])
         self.assertEqual(payload["last_scan"], 123.0)
 
 
