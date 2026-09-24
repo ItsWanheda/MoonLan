@@ -192,6 +192,26 @@ class _FakeRequest:
         host = "192.0.2.7"
 
 
+class HealthEndpointTest(unittest.TestCase):
+    """The health endpoint stays cheap and reports useful service state."""
+
+    def test_health_is_liveness_only_and_uncached(self):
+        server.state.scanning = True
+        server.state.last_scan = 123.0
+        server.state.last_scan_ok = 100.0
+        server.state.last_error = "TimeoutError: demo"
+        server.state.last_error_ts = 120.0
+
+        response = asyncio.run(server.api_health())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.body.decode().count('"status":"ok"'), 1)
+        self.assertIn(b'"version":"0.7.4"', response.body)
+        self.assertIn(b'"scanning":true', response.body)
+        self.assertIn(b'"last_scan":123.0', response.body)
+
+
 class ServiceTest(unittest.TestCase):
     """The endpoints, against a small map and a fake ping."""
 
