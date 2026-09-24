@@ -221,7 +221,7 @@ class HealthEndpointTest(unittest.TestCase):
         self.assertEqual(response.headers["cache-control"], "no-store")
         payload = json.loads(response.body)
         self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["version"], "0.7.4")
+        self.assertEqual(payload["version"], "0.7.5")
         self.assertGreaterEqual(payload["uptime_seconds"], 0)
         self.assertTrue(payload["scanning"])
         self.assertEqual(payload["scan_done"], 0)
