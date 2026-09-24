@@ -1,596 +1,688 @@
 # Changelog
 
-All notable changes to MoonLan, newest first.
+All notable changes to MoonLan, newest first. Dates are release dates;
+every version was verified on the production network it was written
+for before the next one started.
 
-Dates are release dates. Every version was verified on the production
-network it was written for before the next one started.
+Русская версия — [CHANGELOG_RU.md](CHANGELOG_RU.md).
 
-Russian version — [CHANGELOG_RU.md](CHANGELOG_RU.md).
+## v0.7.3 — 2026-09-24
 
----
+What a person placed is kept, the rest is laid out again.
+
+After v0.7.2 pins worked: they moved with the mouse, were the same in
+every tab and survived a reload. The operator placed eleven key nodes,
+opened a second tab, and the eleven were there. Nothing else was. Every
+chain of unpinned switches had wandered off, the clouds of hosts stood
+somewhere else, links crossed half the map, and new devices appeared
+far from their switch.
+
+The cause was a decision of v0.7.1: the position of an unpinned node
+was written down once, where the physics engine happened to leave it,
+and v0.7.2 made sure nothing ever overwrote it. That position went
+stale the moment somebody moved what the node hangs off. After a
+reload a cloud of hosts started where its switch used to be and was
+dragged across the map; new nodes were placed next to anchors that
+themselves stood in their old places. An absolute position of an
+unpinned node was worse than none.
+
+**Only pins are stored.** The automatic save is gone. At every start
+the service removes the positions nobody pinned and says in one log
+line how many went — the first start after the upgrade clears what
+earlier versions wrote. Releasing a node now forgets its position,
+which reverses v0.7.2 on purpose. Everything that is not pinned is
+laid out on every load from the pinned nodes outwards, a level at a
+time, at offsets derived from the node ids; a switch nobody pinned
+above switches somebody did starts among them. The nodes go into the
+layout engine in id order, and since the engine is not random, two
+pages start from the same picture and head for the same one. On the
+demo the start positions of all 87 nodes were identical in two tabs,
+and with the layout frozen the whole map was; with the physics running
+a tab in the background simply computes fewer steps.
+
+**The groups round a pinned node are kept as offsets.** Laid out from
+scratch, a group goes next to its switch but on whichever side its id
+falls. So the nodes hanging directly off a pinned one — groups, a
+switch without SNMP, an unpinned switch, a bridge, not hosts — are
+recorded relative to it when a person pins it: as they stood when the
+drag began, or at `P` and the menu. "Remember the places around it"
+does the same for a node already pinned. An offset moves with its node,
+is only a starting point, and holds only while the node still hangs
+off the same pinned one; releasing, resetting, a device moving to
+another switch and age remove it. `layout.anchor` is an additive
+column.
+
+On the demo, with the layout frozen, the groups came back exactly at
+their offsets in the same page and in a second one. With the physics
+running the engine decides where they settle, as it may: on that map,
+the same places with an offset or without.
+
+`diag --layout` counts pins and offsets separately.
+
+## v0.7.2 — 2026-09-22
+
+A pinned node moves, an open page sees, and the menu does something.
+
+v0.7.1 went out with two known faults in the very feature it announced
+as done, and a third that nobody had noticed. They come first.
+
+**A pinned node could not be dragged.** Pinning is vis's `fixed`, and
+`fixed` refuses the mouse as firmly as the physics engine: at the
+start of a drag vis records each node's `fixed` and moves only those
+it recorded as loose. The drag was reported, the same coordinates were
+saved again, and the box stayed put — in arrange mode and out of it.
+v0.7.1 said otherwise because it was checked by calling the page's
+functions, which tests the handler and not the drag; that sentence is
+now marked as wrong in its own entry below. vis emits `dragStart`
+before it takes the record, so the pinned nodes of the selection are
+loosened there — checked, not assumed — and held again at `dragEnd`.
+Everything about the drag in this version was checked with the mouse.
+
+Doing it with the mouse found two more. A press held for a quarter of
+a second before moving — which is how most people press — was read by
+vis as "add this node to the selection", Ctrl or not, and on a node
+already selected as "take it out": dragging a switch unhurriedly
+carried off whatever had been selected before, a pinned router
+included, and a group fell apart just before it was dragged. A long
+press is now just a press. And after any drag the next click on the
+map was swallowed, by a guard waiting for "the click that ends a
+drag" that vis never sends.
+
+**The automatic save could unpin somebody else's node.** A page opened
+before a node appeared took it for new — its copy of the layout was as
+old as the page — and saved it with `pinned: false` over a pin set
+elsewhere in the meantime. `PUT /api/layout` now takes
+`"only_new": true`, and the database decides in one transaction:
+`INSERT … ON CONFLICT DO NOTHING`. The answer says what the other
+nodes already have, and a pinned one is applied.
+
+**An open page did not see what other pages did.** The layout was read
+once, when the page opened; the wall monitor that stays open for weeks
+never learnt about a pin set on another screen. It is now read with
+every refresh and applied by rule: pinned by anybody — moved there and
+held; released — let go where it stands; a new position of an unpinned
+node — not applied, since that is only where another page's physics
+left it. A reset done elsewhere is recognised by the reset itself
+(`/api/layout` now says when the last one was), not by rows going
+missing, and the page starts again from what the server holds without
+pushing its old picture back.
+
+**Releasing a node erased its position**, leaving a node that no page
+would save again. Release is now `pinned: false` with the coordinates
+the node has. Placing and releasing are journal entries, one per
+action however many nodes it touched — which is why a pin wiped out by
+another page used to be visible to nobody.
+
+Found on the way:
+
+- The web UI files went out without a Cache-Control header, so after
+  an upgrade a browser could go on running the previous app.js for
+  days. They are now `no-cache`, and index.html names app.js, i18n.js
+  and style.css by a hash of their content, which also covers the one
+  upgrade where a copy cached before the header existed is still
+  around.
+- A new node's offset from its anchor came from a hash that kept the
+  last character of the id almost as it was, so sw:10.0.0.21 …
+  sw:10.0.0.24 started on one spot. FNV-1a with a proper finaliser now.
+- The Arrange button's tooltip said a drag outside the mode "only moves
+  the view", and began "Arrange mode is on" even when it was off.
+
+**The node menu does something.** There is no sign-in yet, so anything
+the menu can make the server do, anybody who opens the page can. The
+line: the server runs only its own actions — ping and traceroute — and
+only at addresses it found itself; the page sends a node id, never an
+address, and an unknown id or an address in its place is refused. What
+config.yaml adds is links, opened on the viewer's machine; commands on
+the server wait for sign-in.
+
+- Ping and Traceroute run on the MoonLan machine, from an argument list
+  with no shell, under a timeout, at most `max_running` (4) at once.
+  The request returns a job at once and the page follows it; the
+  result panel shows loss, round trips and the raw output next to what
+  the continuous monitoring knows. Each run is a line in the service
+  log.
+- A selection or a group is pinged at once into a table that fills as
+  answers arrive, at most `max_targets` (64) nodes — more is refused
+  with the ceiling in the reason, never trimmed.
+- Web interface (`web_scheme`, per switch too), SSH, remote desktop as
+  a downloaded `.rdp` file, copy IP and MAC with a fallback for plain
+  http pages.
+- `context_menu.links`: your own items, with `{ip}`, `{mac}`, `{name}`,
+  `{switch}`, `{port}` filled in and URL-encoded. Schemes are
+  whitelisted; `javascript:` and `data:` never, even if listed. An
+  unusable item is left out with the reason in the startup log and
+  `diag --config`.
+- An item that cannot run is greyed out with the reason, never missing.
+
+## v0.7.1 — 2026-09-22
+
+Dragging a node is not a decision.
+
+v0.7 pinned a node on every drag, and I argued for it in the spec:
+"moving a box on the screen is a statement". It is a convincing
+sentence about the wrong activity. People drag nodes to look — pull the
+cloud of hosts aside, lift a switch out of the tangle, see what is
+behind it — and turning each of those into a commitment meant the map
+set like concrete without anyone ever choosing it. No tag was put on
+v0.7, which was right: a version that gets in the way of using the map
+is not a release, however carefully its server half was built.
+
+Placing a node is a different act from looking at one, and it now has a
+mode of its own. In **Arrange** mode a drag places a node and the right
+button releases it; outside, a drag is just a drag. The mode shows on
+the canvas as well as the button — a mode you can forget you are in is
+a mode that edits the map by accident — and it is deliberately not
+remembered between sessions. `P` does the same from the keyboard. A
+pinned node stays draggable in either mode: pinning says "the physics
+engine does not get to move this", not "nobody does". *(Correction,
+v0.7.2: this was not true. Pinning was vis's `fixed`, which refuses the
+mouse as firmly as the physics engine, so a pinned node could not be
+dragged in either mode — the drag was reported and the same
+coordinates were saved again. It was checked by calling the page's
+functions rather than with the mouse. Fixed in v0.7.2.)* The confirmation
+dialog in front of releasing a node is gone; pinning cost one gesture
+and undoing it cost a dialog.
+
+A full reset did nothing visible until the page was reloaded. vis keeps
+x and y on the node it has already built, and nothing in the update
+path can take them away again — `setOptions` assigns a coordinate only
+when one is given. The nodes went on standing where they were, the
+physics restarted from the same points, and the reset looked inert. The
+node set is now rebuilt for that one case, while the thirty-second
+refresh keeps updating in place so the camera survives.
+
+A node with no saved position had nowhere in particular to be, so it
+appeared wherever vis felt like putting it — the other half of the same
+complaint. It now starts next to the thing it is plugged into, taken
+from the edges that were just drawn, with an offset derived from its id
+so the same device lands in the same place for everyone.
+
+And there is no "save layout" button any more. A button that has to be
+pressed for the picture to survive is a button somebody will forget,
+and then the map they spent ten minutes arranging is gone. A node with
+no saved position gets one as soon as the layout settles; a node that
+already has one is never touched by it, or every open browser would
+rewrite the shared picture on every refresh. The header counter changes
+with it: counting nodes the saved picture did not contain made sense
+while saving was a decision, and now it counts pinned nodes instead —
+how much of this map is somebody's choice rather than the engine's.
+
+Double-clicking a switch or a group node selects the devices on it,
+Ctrl+click adds and removes, and dragging the selection moves it all at
+once. The right button opens a menu built from data rather than markup,
+acting on the whole selection: place, release, open the card, open the
+ports. The next version fills that menu with diagnostic actions and the
+operator's own commands, and it should not have to be rewritten to do
+it.
+
+## v0.7 — 2026-09-22
+
+A layout that does not rearrange itself.
+
+The map has never remembered where anything is. "Freeze layout" turns
+the physics engine off and nothing more; inside one session the nodes
+stay put only because vis.Network is updated rather than rebuilt. Press
+F5 and the map lays itself out again, and the administrator in the next
+room has it arranged differently. The export to PDF and Draw.io that
+stands next in the roadmap was waiting on this: a diagram in a cabinet
+is useful because it matches what somebody remembers, and a PDF with a
+different picture every time does not do that job.
+
+Positions now live in the database, not in one browser. A map of a
+network is a shared object: two people looking at one network have to
+see one picture, or "the switch at the bottom left" stops meaning
+anything. The language and the freeze toggle are personal and stay
+where they are; coordinates are not. The keys were already there and
+already stable — the node ids the topology builds out of what a device
+IS.
+
+Dragging a node is a statement: the person doing it knows where that
+switch stands better than a force-directed layout does. So a dragged
+node is pinned where it was dropped and saved, with nothing to press.
+It is marked, because the map has to answer "did MoonLan arrange this
+or did I" without anyone guessing, and it can be released from its card
+or with a right-click. "Save layout" records where everything is, not
+only what was pinned, and does not un-place what was put by hand.
+
+A node the saved picture does not contain is drawn with a dashed
+outline and counted in the header — the same discipline as "N switches
+ran out of time": a difference between what was recorded and what is
+there now has to be visible, not discovered when the map is printed.
+
+A node that vanished from the network keeps its place. A device
+switched off for the night was not taken away, so nothing is forgotten
+for being absent; only age forgets a position, and only for a node the
+map no longer has. That housekeeping runs at the first scan after a
+restart rather than at startup proper — before that scan there is no
+map to compare against, and a restart would throw the whole layout
+away. Saving and clearing the layout go into the journal: somebody
+changed the picture everybody else is looking at.
+
+`diag --layout` reports what is stored, what was placed by hand, what
+has no saved position and what has no node.
+
+Deliberately not in this version: manual links and manual nodes. A link
+drawn by hand is indistinguishable on the map from one that was
+inferred, and there is nothing to check it against — it will not go
+stale, will not disappear when a cable moves, and will go on asserting
+something that stopped being true years ago. That is the opposite of
+the line this project has held since v0.6.4. If it is ever wanted, a
+hand-drawn object has to look different, be dated and be checkable, and
+that is its own piece of work.
+
+## v0.6.15 — 2026-09-21
+
+A reading nobody took is not an observation. Two defects, neither of
+them about topology, both found while writing up earlier work.
+
+A switch that runs out of its poll budget keeps the last table that did
+arrive, so the branch behind it stays on the map. That is v0.6.12 and
+it stands. What did not stand is that nothing downstream could tell the
+copy from a fresh reading: `upsert_hosts` set `last_seen = now` and
+`seen_count += 1` for every device behind it, so a device unplugged an
+hour ago reported "last seen: just now"; a MAC present in that one
+reading accumulated confirmations from repeats of itself and was
+announced in the journal as a new device, with no second observation
+ever happening; and `FdbStability` re-stamped every entry as fresh, so
+a three-poll smoothing never expired and quietly became permanent
+memory.
+
+The same sin as v0.6.4's "no answer is not zero" and v0.6.13's "a dash
+is not expired", from the other side: not an absence dressed as a
+value, but a copy dressed as an observation. Such hosts are now marked
+and dated. They stay on the map at their port — cables do not move
+every ten minutes — but they are kept out of the inventory write and
+out of the set that projects confirmations, and the smoothing countdown
+runs without being refreshed while the saved table goes on drawing the
+links behind it. The host card says which switch, when the reading was
+taken, and that "last seen" above is the last time the device really
+was found. `diag --hosts` honours the poll budget too, and says whose
+MAC table is missing from its comparisons.
+
+And the map could stop being refreshed without saying so. Three
+periodic requests — the map, the ports panel, the scan progress — none
+of them caught anything, so when the service went away the promise
+rejected unhandled every thirty seconds and the picture simply stopped
+changing, which looks exactly like a quiet network. All three now
+survive it: the last good picture stays on screen, the header says in
+amber that the data is no longer arriving and how old it is, recovery
+clears it silently, and the console gets one line for the loss and one
+for the return instead of one every thirty seconds.
+
+## v0.6.14 — 2026-09-21
+
+LLDP builds the tree, it does not decorate it. And one branch of the
+live network turned out to need something else entirely.
+
+Behind port 1/28 of mb1 hang three boxes: two RouterOS bridges and an
+Edge-Core. LanTopoLog draws them as a garland. MoonLan drew all three
+straight onto mb1 and laid the one LLDP edge it had on top, closing a
+ring that does not exist.
+
+The order of the two passes was wrong. A MAC table says a device is
+*reachable through* a port; LLDP says a device is *on the cable*. The
+second is the stronger statement, and it was arriving after the weaker
+one had drawn the picture — `merge_lldp_links` could refine ports and
+add a missing pair, but never remove the link that pair contradicted.
+`lldp_link_candidates` now runs before `infer_tree`, which takes the
+pairs: a member another member reports on a port of its own that is not
+its uplink is *behind* that member, leaves the contest for "nearest",
+and is hung off its host afterwards.
+
+The same rule, stated once and applied to the finished link set,
+withdraws a MAC-table link that LLDP forbids — but only where the link
+it prefers is present, and only where the switch in question is the far
+end. Each removal is a WARNING and a journal entry: the tree is not
+rearranged silently.
+
+A ring among polled switches is now either real or an invention. Real
+means the spanning tree is holding one of its ports in discarding, and
+that ring is drawn as it is. A ring with no blocked port loses its
+weakest link; where several are equally weak, the one "behind, not
+beside" forbids; where nothing tells them apart, nothing is removed and
+every link is marked, because erasing an arbitrary cable is worse than
+admitting the ring cannot be explained.
+
+Then the live network said the diagnosis was half right. LLDP in that
+branch is unusable: those RouterOS bridges forward LLDP frames, so
+every port of theirs carries extra talkers and yields no link — and
+mutual agreement does not rescue it, since forwarding is symmetric and
+mb1 and the Edge-Core two hops apart name each other as confidently as
+two devices sharing a cable. What was actually missing was direction.
+`uplink_of` finds the way out of a branch by looking for switches
+outside it, and this branch sees nothing outside itself, so all three
+came back with an unknown uplink — which disarmed the very test that
+orders a branch. Inside a branch there is a second answer, already used
+to draw the far end of every link: the port a member sees its parent
+on. With it, the MAC tables order this branch on their own, and the map
+now draws what LanTopoLog draws.
+
+The fallback star is still there for branches nothing can order, and it
+is now dashed and dimmed, with both the edge tooltip and the link card
+saying what is unknown about it. The switch card lists every line drawn
+from that switch — neighbour, port, source, speed, whether STP is
+blocking it.
+
+`diag --topology` finally honours the per-host budget v0.6.12 gave the
+service, runs the same passes in the same order, prints each link's
+speed and both port states, and lists what the inference withdrew and
+which rings are left standing.
 
 ## v0.6.13 — 2026-09-18
 
-> **A dash means never measured, not quietly expired.**
-> Four absences that looked alike, and one that pointed the wrong way.
+A dash means never measured, not quietly expired. Four absences that
+looked alike, and one that pointed the wrong way.
 
-### Port Counter Freshness
+The ports panel lost whole columns of counters and got them back a
+minute later. Nothing was wrong with the switches: `current()` dropped
+every rate older than three counters intervals, the port fell out of
+the answer, and the panel drew "—" — the same "—" it draws for a column
+the agent does not implement. Opposite diagnoses. A measurement is now
+reported however old it is, with its age: shown dimmed past three
+intervals, withheld past `stale_rate_hide_minutes` (30), where a rate
+really has become a memory — and even then the empty cell says when the
+port was last measured. Only a port never measured at all gets a bare
+dash.
 
-The ports panel lost whole columns of counters and got them back a minute later.
+Half of why those cycles were being missed: the counters cycle gave up
+the instant it found a host's lock taken by the scan, and a scan holds
+a host for as long as its poll budget allows. Any budget of two
+intervals or more therefore guaranteed a missed cycle after every scan
+— the operator had set 180 against an interval of 60 and made himself
+four permanently ageing switches. It now waits up to
+min(counters_interval / 2, 20) seconds, and a budget at or above twice
+the interval is reported at startup and in `diag --config`, per device.
 
-Nothing was wrong with the switches: `current()` dropped every rate older than three counter intervals, the port fell out of the answer, and the panel drew `—` — the same `—` it draws for a column the agent does not implement.
+`10.3.7.10` was not polled in full once in six hours: thirty scans,
+thirty budget failures, while the map showed it alive from its last
+complete reading. That is a third state beside "answering" and "down".
+After `stale_switch_scans` (5) consecutive scans the card counts them
+and dates the reading, and a `switch_stale` alarm is raised — warning,
+syslog, cleared by one full poll. Never `switch_down`: sending somebody
+to look for a dead device that is answering wastes the trip. Each poll
+now records how long it took, and `diag --config` prints it — a budget
+set by eye is a budget set wrong.
 
-Opposite diagnoses.
+The STP panel called mb0 the root while the map drew it as an ordinary
+switch. Both read the same fields off the same objects, at different
+moments: `judge_network`, which is the only test that can recognise a
+root reporting zeros about itself, ran after `build_topology` had
+already decided the node was not operating. It now runs first.
 
-A measurement is now reported however old it is, with its age:
+`community: public` went back into the config by accident, every switch
+went dark, and `diag --walk` said "the subtree is empty, or the agent
+does not implement it". Both halves were wrong — SNMPv2c does not
+answer a wrong community at all, and that silence is shaped exactly
+like an unimplemented object. MoonLan now asks `sysDescr` and pings
+before deciding, and names the community first when the host answers
+ICMP and nothing else. All switches silent at once is reported as one
+fact rather than N.
 
-* Shown dimmed past three counter intervals.
-* Withheld past `stale_rate_hide_minutes` (`30`), where a rate really has become a memory.
-* Even then, the empty cell says when the port was last measured.
-* Only a port never measured at all gets a bare `—`.
-
-### Counter Cycle Scheduling
-
-Half of why those cycles were being missed: the counters cycle gave up the instant it found a host's lock taken by the scan, and a scan holds a host for as long as its poll budget allows.
-
-Any budget of two intervals or more therefore guaranteed a missed cycle after every scan.
-
-The operator had set `180` against an interval of `60` and made himself four permanently ageing switches.
-
-The counters cycle now waits up to:
-
-```text
-min(counters_interval / 2, 20)
-```
-
-seconds.
-
-A budget at or above twice the interval is also reported at startup and in `diag --config`, per device.
-
-### Stale Switch Detection
-
-`10.3.7.10` was not polled in full once in six hours:
-
-* 30 scans
-* 30 budget failures
-* The map still showed it alive from its last complete reading
-
-That is a third state beside **answering** and **down**.
-
-After `stale_switch_scans` (`5`) consecutive scans, the card counts them and dates the reading. A `switch_stale` alarm is raised as a warning, logged to syslog, and cleared by one full poll.
-
-It never becomes `switch_down`.
-
-Sending somebody to look for a dead device that is actually answering wastes the trip.
-
-Each poll now records how long it took, and `diag --config` prints it. A budget set by eye is a budget set wrong.
-
-### STP Root Detection
-
-The STP panel called `mb0` the root while the map drew it as an ordinary switch.
-
-Both read the same fields from the same objects, but at different moments.
-
-`judge_network`, the only test capable of recognising a root reporting zeros about itself, ran after `build_topology` had already decided the node was not operating.
-
-It now runs first.
-
-### SNMP Community Diagnostics
-
-`community: public` went back into the config by accident, every switch went dark, and `diag --walk` said:
-
-> "the subtree is empty, or the agent does not implement it"
-
-Both halves were wrong.
-
-SNMPv2c does not answer a wrong community at all, and that silence is shaped exactly like an unimplemented object.
-
-MoonLan now:
-
-1. Asks `sysDescr`.
-2. Pings the host.
-3. Uses the result to distinguish an unreachable device from a wrong community.
-4. Names the community first when the host answers ICMP and nothing else.
-
-When all switches go silent at once, MoonLan reports it as one fact rather than `N` separate failures.
-
-### STP Tree Grouping
-
-The panel showed two spanning trees, the second one rooted at the string `"unknown"` and holding three RouterOS bridges, with `stp_fragmented` repeatedly raising and clearing over it.
-
-A walk of `1.3.6.1.2.1.17.2` on an RB941 returns the protocol, priority, and whole port table — but none of the scalars in between.
-
-The bridge therefore names no root while its uptime is six weeks and `TimeSinceTopologyChange` is zero. The historical heuristic interpreted that as "converged long ago".
-
-A bridge in a tree knows its root.
-
-Where there is none, the heuristic no longer gets to guess.
-
-The absence of a root is also no longer allowed to become a grouping key. Switches with no root are listed under the table rather than counted as an island.
-
----
+And the panel showed two spanning trees, the second one rooted at the
+string "unknown" and holding three RouterOS bridges, with
+`stp_fragmented` raising and clearing over it. A walk of
+1.3.6.1.2.1.17.2 on an RB941 returns the protocol, the priority and the
+whole port table — and none of the scalars in between, so the bridge
+names no root while its uptime is six weeks and its
+TimeSinceTopologyChange is zero, which the historical heuristic read as
+"converged long ago". A bridge in a tree knows its root; where there is
+none, the heuristic no longer gets to guess. And the absence of a root
+is no longer allowed to become a grouping key: switches with no root
+are listed under the table rather than counted as an island.
 
 ## v0.6.12 — 2026-09-17
 
-> **One slow agent delays itself, not the whole map.**
+One slow agent delays itself, not the whole map. Four MikroTik boxes
+joined `switches:` and the map stopped updating. They were not silent:
+they answered, taking 272 and 468 seconds each, and the scan waited for
+the last one — then the next scan returned immediately because that one
+was still running.
 
-Four MikroTik boxes joined `switches:` and the map stopped updating.
+`return_exceptions=True` (v0.6.6) had covered a switch that raises, not
+one that is slow. Every request stayed inside `snmp.timeout`; nothing
+bounded their sum. `snmp.host_budget_seconds` (default 120) now does.
+A switch that runs past it is left out of that scan and the rest of the
+network gets its map on time.
 
-They were not silent: they answered, taking 272 and 468 seconds each, and the scan waited for the last one. The next scan then returned immediately because that one was still running.
+It is **not** reported as unreachable, because it is not: it answers,
+only too slowly. No `switch_down` is raised for it and none is cleared
+— we stopped asking, which is a fact about MoonLan and not about the
+switch. Its last complete reading stays on the map, its card dates it,
+and the header says how many switches ran out of time.
 
-`return_exceptions=True` (v0.6.6) had covered a switch that raises, not one that is slow.
+A `switches:` entry may now be a mapping with `ip:` and any of
+`community`, `timeout`, `retries`, `retries_on_break`,
+`host_budget_seconds`, applying to that switch alone; everything else
+is inherited from `snmp:`. The plain list of addresses every existing
+config.yaml uses keeps working untouched. A slow box usually wants a
+*shorter* timeout and one retry, not a longer one — the requests that
+cost the time are the ones it will never answer. `diag --config` prints
+the settings each switch is actually polled with, marking the ones it
+was given of its own.
 
-Every request stayed inside `snmp.timeout`; nothing bounded their total duration.
+`1.0.8802.1.1.2.1.4.2.1.3` — the LLDP management-address table — came
+back from both RouterOS boxes as zero rows after the full retry budget,
+every cycle. The other thirteen walks on the same device got through:
+the agent does not implement the table and cannot say so, where an
+agent that can answers `noSuchObject` in one round trip. After
+`snmp.dead_oid_strikes` walks in a row that returned no rows **and**
+ended in a timeout, that OID is left alone on that host for
+`snmp.dead_oid_cooldown_scans` scans and then tried again. Only that
+one outcome counts: a partial answer is what `retries_on_break` is for.
+Both edges are logged and the skipped walk reports "no answer" rather
+than an empty table — data missing because MoonLan stopped asking must
+never be mistaken for data the device denies having. `diag --skipped`
+asks the running service what is on pause and for how much longer.
 
-### Per-Switch Host Budgets
+Both RouterOS boxes also reported "4 of 4 neighbours sit on a local
+port that could not be matched to an interface". `lldpRemLocalPortNum`
+is 0 on every row there, so the remote table says nothing about the
+local port — but that was not what broke it. `lldpRemChassisId`
+announces subtype macAddress and then carries seventeen bytes of ASCII
+instead of six octets, and a string is in nobody's forwarding table, so
+the FDB fallback — which knows all four of these addresses — never got
+the chance to place them. A MAC spelled out is still a MAC; all four
+now land on their ports. `lldpRemLocalPortNum` is additionally tried as
+a bridge-port number, between the forwarding table and the bare
+ifIndex.
 
-`snmp.host_budget_seconds` now provides a per-switch execution budget.
-
-Default:
-
-```yaml
-host_budget_seconds: 120
-```
-
-A switch that runs past its budget is left out of that scan, allowing the rest of the network to receive its map on time.
-
-It is **not** reported as unreachable.
-
-It answers, only too slowly.
-
-Therefore:
-
-* No `switch_down` alarm is raised.
-* Existing `switch_down` alarms are not cleared.
-* The last complete reading remains on the map.
-* The switch card is dated.
-* The header reports how many switches ran out of time.
-
-### Per-Switch SNMP Configuration
-
-A `switches:` entry may now be a mapping:
-
-```yaml
-switches:
-  - ip: 10.0.0.10
-    community: public
-    timeout: 5
-    retries: 1
-    retries_on_break: 2
-    host_budget_seconds: 120
-```
-
-Supported per-switch settings:
-
-* `community`
-* `timeout`
-* `retries`
-* `retries_on_break`
-* `host_budget_seconds`
-
-Everything else is inherited from `snmp:`.
-
-The existing plain list of addresses continues to work unchanged.
-
-A slow box usually wants a **shorter timeout and one retry**, not a longer one. The requests consuming the time are the ones it will never answer.
-
-`diag --config` now prints the settings each switch is actually polled with and marks settings explicitly overridden for that switch.
-
-### Dead OID Cooldown
-
-`1.0.8802.1.1.2.1.4.2.1.3` — the LLDP management-address table — returned zero rows from both RouterOS boxes after the full retry budget, every cycle.
-
-The other thirteen walks on the same devices succeeded.
-
-The agent does not implement the table and cannot say so, whereas an agent that can answer `noSuchObject` does so in one round trip.
-
-After `snmp.dead_oid_strikes` consecutive walks return no rows **and** end in a timeout, that OID is left alone on that host for `snmp.dead_oid_cooldown_scans` scans and then tried again.
-
-Only that exact outcome counts.
-
-A partial answer is handled by `retries_on_break`.
-
-Both edges are logged, and the skipped walk reports:
-
-> "no answer"
-
-rather than an empty table.
-
-Data missing because MoonLan stopped asking must never be mistaken for data the device denies having.
-
-`diag --skipped` asks the running service what is currently paused and for how much longer.
-
-### RouterOS LLDP MAC Handling
-
-Both RouterOS boxes also reported:
-
-> "4 of 4 neighbours sit on a local port that could not be matched to an interface"
-
-`lldpRemLocalPortNum` is `0` on every row there, so the remote table says nothing about the local port.
-
-But that was not what broke placement.
-
-`lldpRemChassisId` announces subtype `macAddress` and then carries seventeen bytes of ASCII instead of six octets. A string is in nobody's forwarding table, so the FDB fallback — which knows all four of these addresses — never got the chance to place them.
-
-A MAC spelled out is still a MAC.
-
-All four neighbours now land on their correct ports.
-
-`lldpRemLocalPortNum` is additionally tried as a bridge-port number, between the forwarding table and the bare `ifIndex`.
-
-### Scan Status
-
-The header now counts switches while a scan runs:
-
-```text
-Scanning: 6 of 8
-```
-
-`/api/status` carries the same fields.
-
-A scan that gives up waiting for a switch reports that fact in amber, with the affected names available in the tooltip.
-
-Ten minutes of a map that did not move, with nothing in the interface saying why, is what sent the operator to `journalctl`.
-
----
+The header counts switches off while a scan runs ("Scanning: 6 of 8"),
+`/api/status` carries the same fields, and a scan that gave up waiting
+for somebody says so in amber with the names in the tooltip. Ten
+minutes of a map that did not move, with nothing in the interface
+saying so, is what sent the operator to journalctl.
 
 ## v0.6.11 — 2026-09-17
 
-> **One root is one root, and a panel header stays put.**
+One root is one root, and a panel header stays put. RSTP went live on
+the network this project was written for, and the STP panel answered
+by showing three of its own defects.
 
-RSTP went live on the network this project was written for, and the STP panel exposed three of its own defects.
+A Bridge ID is a 4-bit priority and a 12-bit system id extension, not
+one number — and some agents put the priority in the low byte, so one
+root read as `4096/34:0a:...` from an HPE and `16/34:0a:...` from an
+Edge-Core, and the network was reported as having two trees. Bridge
+IDs are now parsed per 802.1t, the shifted encoding is detected,
+corrected and logged rather than silently repaired, and roots are
+compared by MAC.
 
-### Bridge ID Parsing
+Four D-Links running RSTP were called "not operating" because the
+only test was historical — topology changes, or a change newer than
+the uptime — and a tree switched on an hour ago has neither. Two tests
+now come first: a bridge that accepted somebody else's root at a cost
+above zero is participating, full stop; and a switch whose neighbours
+follow its own address is the root, which is the one thing a switch
+cannot establish about itself. `diag --stp` and the panel say which
+test decided. A switch that answers BRIDGE-MIB with nothing at all —
+zero Bridge ID, no topology changes, no port out of disabled — is now
+reported as exactly that, instead of as a tree that failed to
+converge.
 
-A Bridge ID is a 4-bit priority and a 12-bit system ID extension, not one number.
-
-Some agents put the priority in the low byte.
-
-As a result, one root was read as:
-
-```text
-4096/34:0a:...
-```
-
-from an HPE and:
-
-```text
-16/34:0a:...
-```
-
-from an Edge-Core.
-
-The network was consequently reported as having two trees.
-
-Bridge IDs are now parsed according to 802.1t. Shifted encoding is detected, corrected, and logged rather than silently repaired.
-
-Roots are compared by MAC address.
-
-### RSTP Operating-State Detection
-
-Four D-Link switches running RSTP were called "not operating" because the only test was historical:
-
-* topology changes
-* or a topology change newer than the switch uptime
-
-A tree switched on an hour ago has neither.
-
-Two tests now come first:
-
-1. A bridge that accepted somebody else's root at a non-zero cost is participating.
-2. A switch whose neighbours follow its own address is the root — the one thing a switch cannot establish about itself.
-
-`diag --stp` and the panel now report which test decided the state.
-
-A switch that answers BRIDGE-MIB with nothing meaningful — zero Bridge ID, no topology changes, and no port out of disabled — is reported as exactly that rather than as a tree that failed to converge.
-
-### Shared Panel Layout
-
-A port reported as blocking with no cable in it is not a blocked link. RouterOS reports blocking on every spare socket.
-
-The panel skeleton introduced in v0.6.2 is now a shared class, so the STP, alarms, journal, and details panels keep their header and close button in view while their contents scroll.
-
-### Fragmented STP Trees
-
-`stp_fragmented` now says what it may actually represent:
-
-> Segments whose trunk ports sit in different VLANs form separate trees by design.
-
-The panel lists the VLANs beside each root.
-
----
+Also: a port reported blocking with no cable in it is not a blocked
+link (RouterOS reports blocking on every spare socket); the panel
+skeleton from v0.6.2 is now a shared class, so the STP, alarms,
+journal and details panels keep their header and close button in view
+while their contents scroll; and `stp_fragmented` says what it may
+well be — segments whose trunk ports sit in different VLANs form
+separate trees by design, and the panel lists the VLANs beside each
+root.
 
 ## v0.6.10 — 2026-09-14
 
-> **Devices seen through a trunk are grouped beyond it, not on it.**
-
-A device visible only through a trunk is placed on that trunk and marked approximate.
-
-The port is correct; the place behind it is unknown.
-
-Twenty such devices drawn one dot at a time make the port look like twenty computers plugged directly into the switch, mixed in with its real neighbours.
-
-They now receive a container:
-
-```text
-Beyond the trunk · N
-```
-
-The container expands into the list of devices behind the trunk.
-
-It is deliberately **not** a "switch without SNMP". That node claims a switch exists, while here MoonLan only knows that something exists beyond the trunk.
-
-Pseudo-switches are still never created on a trunk. Many MACs on a trunk are exactly what a trunk is for.
-
-The group hangs off whatever stands on that cable when something does, and never off a switch MoonLan polls. If the devices were behind that switch, they would appear on its downlink ports.
-
-Threshold:
-
-```yaml
-trunk_group_threshold: 3
-```
-
----
+Devices seen through a trunk are grouped beyond it, not on it. A
+device visible only through a trunk is placed on that trunk and marked
+approximate — the port is right, the place behind it is unknown — and
+twenty of them drawn one dot at a time make the port look like twenty
+computers plugged into the switch, mixed in with its real neighbours.
+They now get a container: one "Beyond the trunk · N" node past the
+cable, which expands into the list of what is out there. It is
+deliberately not a "switch without SNMP": that node claims a switch is
+there, and here nobody knows what is. Pseudo-switches are still never
+created on a trunk — many MACs on a trunk is what a trunk is for. The
+group hangs off whatever stands on that cable when something does, and
+never off a switch MoonLan polls: if the devices were behind it they
+would be on its downlink ports. Threshold: `trunk_group_threshold`,
+default 3.
 
 ## v0.6.9 — 2026-09-14
 
-> **A device seen on an uplink is not behind it.**
-
-The switch that reports a MAC address on the cable it came in on is telling you where the device is **not**.
-
-The placement rule had been reading it the other way: the deepest switch in the tree won every claim it could make.
-
-An Edge-Core whose only live port was its own uplink consequently collected twenty devices belonging to the rest of the network.
-
-Placement now considers direction first and depth second.
-
-Additional rules:
-
-* The root's trunks count as pointing down because nothing is above the root.
-* A device whose every sighting is on an uplink is not placed.
-* Such devices go to **Not on map** rather than being attached to somebody's uplink.
-
-Host placement finally has tests.
-
-The rule had been reordered three times without one, with each fix breaking the case the previous fix had made work.
-
----
+A device seen on an uplink is not behind it. The switch that reports a
+MAC address on the cable it came in on is telling you where the device
+is **not**, and the placement rule had been reading it the other way:
+the deepest switch in the tree won every claim it could make, so an
+Edge-Core whose only live port was its own uplink collected twenty
+devices belonging to the rest of the network. Direction now decides
+first and depth second, the root's trunks count as pointing down
+(nothing is above the root), and a device whose every sighting was on
+an uplink is not placed at all — it goes to "Not on map", because
+hanging it off somebody's uplink would be a statement about the one
+place it cannot be. Host placement finally has tests: the rule had
+been reordered three times without one, each fix breaking the case the
+previous fix had made work.
 
 ## v0.6.8 — 2026-09-14
 
-> **Identify the model before believing what it reports.**
+Identify the model before believing what it reports. In SNMPv2c an
+agent answers a request for an object it does not implement with a
+*successful* reply carrying `noSuchObject`, so a probe that accepts
+"the agent replied" succeeds on every device alive — three switches
+were read off a branch belonging to another vendor and then reported
+as having their loop protection switched off. A branch now counts as
+identified only when it answers with data, the loop-detection profiles
+are keyed by the sysObjectID each model actually answers with (a
+D-Link product's private branch is not under its own identifier), and
+"unknown" is no longer printed as "switched off". An aggregate ifIndex
+that is not in the interface table is dropped instead of drawing a
+trunk nobody has, a switch MoonLan polls no longer raises
+"unmanaged bridge" about itself, and an empty `sysName` stops
+captioning a node with its address twice.
 
-In SNMPv2c, an agent answers a request for an object it does not implement with a successful reply carrying `noSuchObject`.
-
-A probe that accepts "the agent replied" therefore succeeds on every live device.
-
-Three switches were read from a branch belonging to another vendor and then reported as having their loop protection switched off.
-
-A branch now counts as identified only when it answers with data.
-
-Loop-detection profiles are keyed by the `sysObjectID` each model actually answers with. A D-Link product's private branch is not necessarily under its own identifier.
-
-`unknown` is no longer printed as `switched off`.
-
-Additional fixes:
-
-* An aggregate `ifIndex` that is not present in the interface table is dropped instead of drawing a trunk nobody has.
-* A switch MoonLan polls no longer raises `unmanaged bridge` about itself.
-* An empty `sysName` no longer captions a node with its address twice.
-
-### Diagnostic Anonymisation
-
-Diagnostic dumps left the repository.
-
-`diag --anonymize` now rewrites reports through documentation ranges:
-
-* RFC 5737
-* RFC 7042
-
-A substitution table remains consistent for the entire run.
-
-`docs/diag_example/` contains one anonymised sample of each report.
-
----
+Also: the diagnostic dumps left the repository. `diag --anonymize`
+rewrites any report through documentation ranges (RFC 5737, RFC 7042)
+with a substitution table that stays consistent for the run, and
+`docs/diag_example/` holds one anonymised sample of each report.
 
 ## v0.6.7 — 2026-09-11
 
-### Loop Detection
-
-Loop Detection is read from vendors' private MIBs because there is no standard MIB for it.
-
-Profiles describe a model family:
-
-* The `sysObjectID` it answers with
-* Where its branch starts
-* Scalar suffixes
-* Per-port columns
-* The raw status meaning "no loop"
-
-Built-in profiles cover:
-
-* D-Link DGS-1210-26 Rev.F1
-* D-Link DES-1210-28/ME
-* D-Link DES-3526
-
-Additional profiles can be added in `config.yaml` without changing code.
-
-Loop Detection runs on the counters cycle rather than the ten-minute scan because a loop is an incident.
-
-Only the "no loop" value has been observed on this hardware, so the rule is inverted:
-
-> Anything else raises `loop_detected` with severity `critical` and includes the raw value in the alarm text.
-
-The first real loop documents itself.
-
-A model that reports nothing is shown as reporting nothing — never as "no loops".
-
----
+Loop Detection, read from the vendors' private MIBs — there is no
+standard one. Profiles describe a model family: which sysObjectID it
+answers with, where its branch starts, the suffixes of the scalars and
+the per-port columns, and which raw status means "no loop". Built in
+for the D-Link DGS-1210-26 Rev.F1, DES-1210-28/ME and DES-3526; more
+can be added in `config.yaml` without touching code. Polled on the
+counters cycle rather than the ten-minute scan, because a loop is an
+incident. Only the "no loop" value has ever been observed on this
+hardware, so the rule is inverted: anything else raises
+`loop_detected` (critical) with the raw value in the text, and the
+first real loop documents itself. A model that reports nothing is
+shown as reporting nothing — never as "no loops".
 
 ## v0.6.6 — 2026-09-11
 
-> **One impossible OID stopped the counters for the whole network.**
-
-A synthetic aggregate carries a negative `ifIndex`.
-
-`pyasn1` refuses to build a request for it, and the exception escaped through `asyncio.gather`.
-
-Every column on all five switches was therefore empty for as long as the service ran.
-
-Fixed in four layers.
-
-Offline groups now hang off the bridge on their port instead of beside it.
-
----
+One impossible OID stopped the counters for the whole network. A
+synthetic aggregate carries a negative ifIndex, pyasn1 refuses to
+build a request for it, and the exception left through
+`asyncio.gather` — every column on all five switches was empty for as
+long as the service ran. Fixed in four layers, and offline groups now
+hang off the bridge on their port instead of beside it.
 
 ## v0.6.5 — 2026-09-10
 
-A walk that stops answering halfway is now picked back up from the last OID that arrived, up to `snmp.retries_on_break` times.
-
-On a switch with 36 interfaces, the gigabit uplinks at the end of the table were missing in three polls.
-
-A partial answer is now reported as a **partial answer**, rather than `NO ANSWER`.
-
-Ports a resumed walk still misses are fetched individually using the 32-bit counter.
-
-A packet column of zeros beside terabytes of octets is interpreted as unfilled rather than real traffic.
-
-SNMP defaults were raised to:
-
-```yaml
-timeout: 5
-retries: 2
-```
-
-A mean timeout does not look like a timeout further down the line; it looks like a switch that does not implement the OID.
-
----
+A walk that stops answering halfway is picked back up from the last
+OID that arrived, up to `snmp.retries_on_break` times: on a switch
+with 36 interfaces the gigabit uplinks at the end of the table went
+missing in three polls running. A partial answer is reported as a
+partial answer rather than "NO ANSWER", ports a resumed walk still
+missed are fetched one GET at a time from the 32-bit counter, and a
+packet column of zeros beside terabytes of octets is read as unfilled.
+SNMP defaults raised to `timeout: 5`, `retries: 2` — a mean timeout
+does not look like a timeout further down the line, it looks like a
+switch that does not implement the OID.
 
 ## v0.6.4 — 2026-09-10
 
-### Honest Counters
-
-`bytes()` on a pysnmp integer allocates a zero buffer as long as the number.
-
-That is how `diag --walk` asked for 1.49 GB on an octet counter and was killed.
-
-A counter column the agent never answered now reads:
-
-```text
-—
-```
-
-rather than:
-
-```text
-0.0
-```
-
-It raises no alarm in either direction.
-
-Each direction independently falls back to its 32-bit counter.
-
-Additional topology fixes:
-
-* A quiet device stays on the port where it lives instead of moving to the core's trunk.
-* The external network hangs off the provider's bridge.
-* MoonLan's own router port no longer looks like a way out of the network.
-
----
+Honest counters. `bytes()` on a pysnmp integer allocates a zero buffer
+as long as the number, which is how `diag --walk` asked for 1.49 GB on
+an octet counter and was killed. A counter column the agent never
+answered reads "—", not 0.0, and raises no alarm in either direction;
+each direction falls back to its 32-bit counter on its own. A quiet
+device stays at the port it lives on instead of moving to the core's
+trunk, the external network hangs off the provider's bridge, and our
+own router's port stops looking like a way out of the network.
 
 ## v0.6.3 — 2026-09-10
 
-* Readable links and addresses in the cards.
-* The address an operator actually uses appears beneath a router's name.
-* `uplink_ports` announces itself from the port that looks like an uplink.
-* A second MoonLan instance can safely run beside the live service.
-* `MOONLAN_CONFIG` provides per-instance configuration.
-* SQLite runs in WAL mode for safe concurrent access.
-
----
+Readable links and addresses in the cards, the address an operator
+actually uses under a router's name, `uplink_ports` announcing itself
+from the port that looks like one, and a second instance that can be
+run safely beside the live service (`MOONLAN_CONFIG`, SQLite in WAL
+mode).
 
 ## v0.6.2 — 2026-09-10
 
-> **One device, one node.**
-
-A bridge whose MAC is also present in the MAC table of its own port is drawn once, with its name and address, instead of twice.
-
-Additional UI and topology improvements:
-
-* Routers are named and drawn as diamonds.
-* Port labels are shown only where they are actual labels rather than firmware templates.
-* The ports panel keeps its header and port column in view.
-* `uplink_ports` collects everything beyond a provider handover under one node.
-
----
+One device, one node: a bridge whose MAC is also in the MAC table of
+its own port is drawn once, with its name and address, instead of
+twice. Routers are named and drawn as diamonds, port labels are shown
+only where they are labels rather than a firmware template, the ports
+panel keeps its header and port column in view, and `uplink_ports`
+collects what lies past a provider handover under one node.
 
 ## v0.6.1 — 2026-09-09
 
-Fixes from the production network, starting with the crash that left it with no map when several bridges shared one port.
-
-Changes include:
-
-* A neighbour is treated as a bridge only when it says it is one.
-* A busy access port is no longer called `LLDP forwarding`.
-* LLDP neighbours are placed using evidence rather than whichever key matched first.
-* 38 rows from one MikroTik are collapsed into one device.
-* A failed scan reports its failure in the header instead of displaying an empty map.
-
----
+Fixes from the production network, starting with the crash that left
+it with no map at all when several bridges shared one port. A
+neighbour is treated as a bridge only when it says it is one, a busy
+access port is no longer called "LLDP forwarding", LLDP neighbours are
+placed by evidence rather than by whichever key matched first, 38 rows
+of one MikroTik collapse into one device, and a failed scan says so in
+the header instead of showing an empty map.
 
 ## v0.6.0 — 2026-09-09
 
-### LLDP
+LLDP: neighbours, capabilities and management addresses, links
+confirmed by LLDP with a source marker on every one (`fdb` / `lldp` /
+`both`), and the bridges nobody polls named on the map with an
+`unmanaged_bridge_detected` alarm when one appears behind an access
+port.
 
-* LLDP neighbours, capabilities, and management addresses.
-* Links confirmed by LLDP include a source marker:
+Honest STP status, which is what this whole branch grew out of. A
+switch with spanning tree disabled still answers every `dot1dStp*`
+object — priority 0, cost 0, itself as the root — and reading those at
+face value turns five disabled switches into five root bridges. Root,
+cost and root port are now used only for a switch that demonstrably
+runs a tree; everything else reads "not operating", with the reason
+kept for `diag --stp`.
 
-  * `fdb`
-  * `lldp`
-  * `both`
-* Bridges MoonLan does not poll are named on the map.
-* `unmanaged_bridge_detected` raises when an unmanaged bridge appears behind an access port.
-
-### STP
-
-Honest STP status is the foundation this entire branch grew out of.
-
-A switch with spanning tree disabled still answers every `dot1dStp*` object:
-
-```text
-priority = 0
-cost = 0
-root = itself
-```
-
-Reading those values at face value turns five disabled switches into five root bridges.
-
-Root, cost, and root port are now used only for switches that demonstrably run a spanning tree.
-
-Everything else reads:
-
-```text
-not operating
-```
-
-The reason is retained for `diag --stp`.
-
-### Port Flapping
-
-`port_flapping` detects a link that bounces between two counter polls by reading `ifLastChange` alongside `ifOperStatus`.
-
-### Diagnostics
-
-`diag --walk` was added for exploring private MIBs.
-
----
+Also `port_flapping`, which catches a link that bounces between two
+counter polls by reading `ifLastChange` alongside `ifOperStatus`, and
+`diag --walk` for exploring private MIBs.
 
 ## v0.5.8 — 2026-09-07
 
-* MAC confirmation before a new address becomes a device.
-* Frame corruption detection for cases where a failing cable causes a switch to learn addresses a few bits away from the real address.
-* Placement of devices visible only through trunks.
+MAC confirmation before a new address becomes a device, frame
+corruption detection (a failing cable makes a switch learn addresses a
+few bits from the real one), and placement of devices visible only
+through trunks.
 
----
-
-Earlier versions are summarised in the roadmap table of the README and in [docs/ROADMAP.md](docs/ROADMAP.md).
+Earlier versions are summarised in the roadmap table of the README and
+in [docs/ROADMAP.md](docs/ROADMAP.md).

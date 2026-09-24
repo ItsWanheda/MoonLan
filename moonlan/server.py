@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import socket
@@ -11,13 +13,14 @@ from collections import Counter
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Query
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import (
-    __version__, corruption, counters, demo, loopdetect, pinger, stp,
+    __version__, corruption, counters, demo, loopdetect, menu, pinger,
+    probes, stp,
 )
 from .alarms import AlarmEngine
 from .config import Config, load_config, parse_uplink_ports
@@ -49,6 +52,29 @@ db = Database(":memory:" if config.demo else config.db_path)
 
 # Ping state of switches (they are not in the hosts table): ip -> {ping_up, last_ping_ok}
 switch_ping: dict[str, dict] = {}
+
+
+async def _demo_probe(argv: list[str], timeout: float):
+    """The menu's ping and traceroute in demo mode: nothing is sent.
+    A device answers when the demo's own monitoring says it does."""
+    ip = argv[-1]
+    rows = await asyncio.to_thread(db.hosts_by_mac)
+    answers = any(
+        row["ip"] == ip and row["ping_up"] for row in rows.values()
+    ) or any(
+        sw_ip == ip and ping.get("ping_up")
+        for sw_ip, ping in switch_ping.items()
+    )
+    return await demo.fake_probe(argv, answers)
+
+
+# The node menu's ping and traceroute: which tools this machine has,
+# and the requests running or recently finished
+tools = (
+    {"ping": "simulated", "traceroute": ("traceroute", "simulated")}
+    if config.demo else probes.find_tools()
+)
+jobs = probes.Jobs(tools, _demo_probe if config.demo else probes.run)
 
 # FDB merged with previous polls: protects links from MAC table aging
 fdb_stability = FdbStability()
@@ -98,6 +124,12 @@ suspect_by_port: dict[tuple[str, str], list[dict]] = {}
 # (switch ip, port) -> why the port looks like a way out of the network
 # and might belong in config.uplink_ports
 uplink_suspects: dict[tuple[str, str], dict] = {}
+
+# Saved node positions are cleaned up once, after the first scan —
+# not at startup proper. The rule is "old AND no longer on the map",
+# and before the first scan there is no map: every position would look
+# orphaned and the whole layout would be thrown away on a restart.
+layout_purged = False
 
 # Loop-detection profiles: the built-in ones plus whatever
 # config.yaml adds or overrides by name (see loopdetect.py)
@@ -359,9 +391,18 @@ async def run_scan() -> None:
         # yet for a phantom to pollute, and waiting would only show the
         # operator an empty screen on the first poll
         confirm_scans = config.new_host_confirm_scans if db_rows else 1
+        # Only switches actually read this cycle. A switch that ran out
+        # of budget contributes the table it produced last time, and
+        # counting a MAC again out of a copy of one reading is how an
+        # address gets "seen in three polls" without anyone looking for
+        # it twice.
         unconfirmed = await asyncio.to_thread(
             db.projected_unconfirmed,
-            {mac for sw in collected if sw.reachable for mac in sw.fdb},
+            {
+                mac for sw in collected
+                if sw.reachable and not sw.over_budget
+                for mac in sw.fdb
+            },
             confirm_scans,
         )
         # What the database already knows about each port feeds the
@@ -382,6 +423,15 @@ async def run_scan() -> None:
             uplink_ports=_uplink_ports(),
             remembered_locations=_remembered_locations(db_rows),
         )
+        # Links the inference removed, and rings it could not resolve.
+        # The syslog line is for the moment it happens; the journal is
+        # so the history of these decisions can be read from the
+        # interface, where the map they changed is.
+        for dropped in topo_info.get("dropped_links", []):
+            await asyncio.to_thread(
+                db.add_event, time.time(), "link_dropped", "",
+                _dropped_link_text(dropped),
+            )
         prev_pseudo_ports = {
             (p["switch"], p["port"]) for p in pseudo_switches
         }
@@ -402,13 +452,35 @@ async def run_scan() -> None:
         # `approximate` is what stops the empty location from
         # overwriting whatever the database already holds.
         uplink_only = topo_info.get("uplink_only", {})
+        stale_switches = {
+            sw.ip for sw in collected if sw.reachable and sw.over_budget
+        }
         seen_nowhere = [
             {"mac": mac, "switch": "", "port": "", "vlan": 0,
              "approximate": True}
-            for mac in uplink_only
+            for mac, sightings in uplink_only.items()
+            # every sighting of it came out of a saved table: nobody
+            # saw this address either
+            if any(ip not in stale_switches for ip, _port in sightings)
         ]
+        # A device behind a switch that ran out of budget is drawn from
+        # the reading that did arrive, and that is right — the map must
+        # not lose a whole branch every cycle. Recording it as a
+        # sighting is a different matter: "last seen" is a moment in
+        # time, seen_count counts polls a MAC was found in, and a
+        # confirmation is the claim that several polls agree. None of
+        # the three survives being fed the same reading twice.
+        observed = [h for h in hosts if not h.get("from_saved")]
+        copied = len(hosts) - len(observed)
+        if copied:
+            log.info(
+                "%d device(s) behind %d switch(es) that ran out of budget "
+                "are drawn from saved readings: they stay on the map, and "
+                "none of it is recorded as a sighting",
+                copied, len(stale_switches),
+            )
         new_macs = await asyncio.to_thread(
-            db.upsert_hosts, hosts + seen_nowhere, confirm_scans,
+            db.upsert_hosts, observed + seen_nowhere, confirm_scans,
             suspect_macs if config.filter_suspect_macs else set(),
         )
         if config.demo:
@@ -613,8 +685,62 @@ async def run_scan() -> None:
             "Scan finished: %d switches, %d links, %d hosts",
             len(switches), len(links), len(hosts),
         )
+        await _purge_layout_once()
     finally:
         state.scan_ended(over_budget)
+
+
+def _dropped_link_text(dropped: dict) -> str:
+    """One journal line about a link the inference took back."""
+    a = f"{dropped['a']} [{dropped['a_port']}]"
+    b = f"{dropped['b']} [{dropped['b_port']}]"
+    if dropped.get("reason") == "behind":
+        return (
+            f"{a} — {b} ({dropped.get('source', 'fdb')}): LLDP puts "
+            f"{dropped['b']} behind {dropped['behind']}, so it cannot "
+            f"also hang off {dropped['a']}"
+        )
+    return (
+        f"{a} — {b} ({dropped.get('source', 'fdb')}): "
+        f"{dropped.get('reason', 'removed by the topology inference')}"
+    )
+
+
+async def _purge_layout_once() -> None:
+    """Forgets positions of nodes that are both old and gone.
+
+    Runs after the first scan of this process, because that is the
+    first moment anything knows which nodes exist. A device switched
+    off for the night keeps its place however long the night is; only
+    age decides, and only for something the map no longer has. The
+    same scan says what each node hangs off, so an offset recorded
+    around a pinned node that a device has since left goes too.
+    """
+    global layout_purged
+    if layout_purged:
+        return
+    layout_purged = True
+    gone = await asyncio.to_thread(
+        db.purge_layout, config.layout_keep_days, _layout_node_ids()
+    )
+    if gone:
+        log.info(
+            "Map layout: forgot the saved position of %d node(s) not seen "
+            "for over %.0f day(s) and no longer on the map: %s",
+            len(gone), config.layout_keep_days,
+            ", ".join(sorted(gone)[:10])
+            + (" and more" if len(gone) > 10 else ""),
+        )
+    moved = await asyncio.to_thread(
+        db.drop_misplaced_offsets, _layout_anchors()
+    )
+    if moved:
+        log.info(
+            "Map layout: forgot the offset of %d node(s) that no longer "
+            "hang off the pinned node it was measured from: %s",
+            len(moved), ", ".join(sorted(moved)[:10])
+            + (" and more" if len(moved) > 10 else ""),
+        )
 
 
 def _lldp_rows(collected: list[SwitchData]) -> list[dict]:
@@ -1730,6 +1856,26 @@ def _log_config() -> None:
         log.info("%s", summary)
     for problem in report.problems:
         log.warning("config.yaml switches: %s", problem)
+    for problem in report.menu_problems:
+        log.warning("config.yaml context_menu: %s", problem)
+    links = config.context_menu.links
+    if links:
+        log.info(
+            "Node menu: %d link(s) of your own: %s", len(links),
+            ", ".join(link.label for link in links),
+        )
+    if config.demo:
+        log.info("Node menu: ping and traceroute are simulated in demo mode")
+    else:
+        trace = tools.get("traceroute")
+        log.info(
+            "Node menu: ping %s, traceroute %s",
+            f"at {tools['ping']}" if tools.get("ping")
+            else "NOT FOUND — the Ping item is disabled",
+            f"({trace[0]}) at {trace[1]}" if trace
+            else "NOT FOUND (neither traceroute nor tracepath) — the "
+                 "Traceroute item is disabled",
+        )
     starved = config.starved_counters()
     if starved:
         log.warning(
@@ -1756,6 +1902,27 @@ def _log_config() -> None:
                 for ip in custom
             ),
         )
+
+
+async def drop_unpinned_positions() -> None:
+    """Startup: the layout keeps what a person placed, and nothing else.
+
+    One line either way, so the first start after the upgrade says how
+    many of the old positions went — and a later one says so too if a
+    page still running an older script wrote some since.
+    """
+    removed = await asyncio.to_thread(db.drop_unpinned_positions)
+    kept = sum(
+        1 for pos in (await asyncio.to_thread(db.layout)).values()
+        if pos["pinned"]
+    )
+    log.info(
+        "Map layout: %d position(s) placed by hand kept; %d position(s) "
+        "nobody placed removed — they were only where the layout engine "
+        "once left a node, and went stale as soon as what it hangs off "
+        "moved. Those nodes are laid out from the pinned ones on every "
+        "load.", kept, removed,
+    )
 
 
 async def purge_invalid_macs() -> None:
@@ -1820,6 +1987,7 @@ async def lifespan(app: FastAPI):
         )
     await purge_invalid_macs()
     await purge_old_hosts()
+    await drop_unpinned_positions()
     await alarm_engine.load()
     await alarm_engine.clear_missing_hosts(
         set(await asyncio.to_thread(db.hosts_by_mac))
@@ -2237,6 +2405,459 @@ async def api_patch_host(mac: str, body: HostPatch):
     return {"mac": mac, "monitored": body.monitored}
 
 
+class NodePosition(BaseModel):
+    x: float
+    y: float
+    pinned: bool | None = None
+
+
+class Offset(BaseModel):
+    x: float
+    y: float
+
+
+class LayoutBody(BaseModel):
+    nodes: dict[str, NodePosition] = {}
+    # Store only nodes that have no position yet, and say what the
+    # others already have. What v0.7.2's automatic save used; kept for
+    # a page still running that script.
+    only_new: bool = False
+    # pinned node -> {node hanging directly off it -> its offset}: how
+    # the groups and switches around a pinned node stood when a person
+    # placed it. The whole set for that anchor; it replaces the last.
+    neighbours: dict[str, dict[str, Offset]] = {}
+
+
+def _layout_anchors() -> dict[str, str]:
+    """node id -> the node it hangs off, as the map draws it.
+
+    The page reads this off the edges it has just built (the first edge
+    into a node); this builds the same edges in the same order from the
+    same topology. Needed here to tell whether an offset recorded around
+    a pinned node still describes the map: a device that moved to
+    another switch has nothing to do with the old one.
+    """
+    topo = state.as_dict()
+    anchors: dict[str, str] = {}
+    for link in topo["links"]:
+        anchors.setdefault("sw:" + link["b"], "sw:" + link["a"])
+    for pseudo in topo.get("pseudo_switches") or ():
+        anchors.setdefault(pseudo["id"], "sw:" + pseudo["switch"])
+    for bridge in topo.get("bridges") or ():
+        anchors.setdefault(bridge["id"], "sw:" + bridge["switch"])
+    for key in ("external_networks", "trunk_groups", "offline_groups"):
+        for group in topo.get(key) or ():
+            anchors.setdefault(
+                group["id"], group.get("via") or "sw:" + group["switch"]
+            )
+    for host in topo["hosts"]:
+        if host.get("merged_into"):
+            continue
+        anchors.setdefault(
+            "host:" + host["mac"], host.get("via") or "sw:" + host["switch"]
+        )
+    return anchors
+
+
+def _current_offsets(saved: dict[str, dict]) -> dict[str, dict]:
+    """The saved layout without offsets that no longer describe the map.
+
+    An offset is kept while its anchor is pinned and — for a node on
+    the map — while the node still hangs off that anchor. Otherwise it
+    is left out, and the node is laid out from the pinned ones like
+    anything else.
+    """
+    anchors = _layout_anchors()
+    kept = {}
+    for node_id, pos in saved.items():
+        anchor = pos.get("anchor")
+        if anchor:
+            base = saved.get(anchor)
+            if not base or not base["pinned"]:
+                continue
+            if node_id in anchors and anchors[node_id] != anchor:
+                continue
+        kept[node_id] = pos
+    return kept
+
+
+def _layout_node_ids() -> set[str]:
+    """Every node id the current map draws.
+
+    The same ids the front end uses, built here so the housekeeping and
+    the diagnostics do not have to ask the browser what exists.
+    """
+    topo = state.as_dict()
+    ids = {"sw:" + sw["ip"] for sw in topo["switches"]}
+    # A device drawn AS another node — a bridge that answers LLDP and
+    # is also in somebody's MAC table — has no node of its own, so it
+    # has no position of its own either. Counting it would put two
+    # nodes in "not in the saved layout" that nobody can place.
+    ids |= {
+        "host:" + h["mac"] for h in topo["hosts"] if not h.get("merged_into")
+    }
+    for key in ("pseudo_switches", "bridges", "external_networks",
+                "offline_groups", "trunk_groups"):
+        ids |= {node["id"] for node in topo.get(key) or () if node.get("id")}
+    return ids
+
+
+def _node_directory() -> dict[str, dict]:
+    """Every node on the map with what the node menu needs to know.
+
+    The page names a node by its id and nothing else. The address a
+    ping goes to, the MAC a link is filled with, all come from here —
+    MoonLan's own topology and database — and never from the request.
+    `switch` is the address of the switch the node hangs off (a
+    switch's own, for a switch), `port` the port there.
+    """
+    topo = state.as_dict()
+    db_hosts = db.hosts_by_mac()
+    nodes: dict[str, dict] = {}
+
+    def entry(kind, ip="", mac="", name="", switch="", port="", row=None):
+        row = row or {}
+        return {
+            "kind": kind, "ip": ip or "", "mac": mac or "",
+            "name": name or "", "switch": switch or "", "port": port or "",
+            # what the continuous ping knows, shown beside a one-off
+            # ping as the second source it is
+            "ping_up": bool(row["ping_up"]) if "ping_up" in row else None,
+            "last_ping_ok": row.get("last_ping_ok", 0) or 0,
+        }
+
+    for sw in topo["switches"]:
+        nodes["sw:" + sw["ip"]] = entry(
+            "switch", sw["ip"], sw.get("mac"), sw.get("name"), sw["ip"],
+            row=switch_ping.get(sw["ip"]),
+        )
+    for host in topo["hosts"]:
+        if host.get("merged_into"):
+            continue  # drawn as its bridge node
+        row = db_hosts.get(host["mac"], {})
+        nodes["host:" + host["mac"]] = entry(
+            "host",
+            row.get("ip") or host.get("router_ip"),
+            host["mac"],
+            row.get("name") or (host.get("lldp") or {}).get("sys_name"),
+            host.get("switch"), host.get("port"), row,
+        )
+    for bridge in topo.get("bridges") or ():
+        row = db_hosts.get(bridge.get("chassis_id", ""), {})
+        nodes[bridge["id"]] = entry(
+            "switch",
+            bridge.get("router_ip") or row.get("ip") or bridge.get("mgmt_ip"),
+            bridge.get("chassis_id"), bridge.get("name"),
+            bridge.get("switch"), bridge.get("port"), row,
+        )
+    for key in ("pseudo_switches", "trunk_groups", "offline_groups",
+                "external_networks"):
+        for group in topo.get(key) or ():
+            nodes[group["id"]] = entry(
+                "group", switch=group.get("switch"), port=group.get("port"),
+            )
+    return nodes
+
+
+def _tool_state() -> dict:
+    """What the menu can run, for greying out what it cannot."""
+    trace = tools.get("traceroute")
+    return {
+        "ping": bool(tools.get("ping")),
+        "traceroute": trace[0] if trace else None,
+        "simulated": config.demo,
+        "max_targets": config.context_menu.max_targets,
+    }
+
+
+def _menu_links(node_id: str, facts: dict) -> tuple[list[dict], list[dict]]:
+    """(built-in links, the operator's links) for one node, filled in.
+
+    A link that lacks a value is still listed, with the field it lacks:
+    the page shows it greyed out with the reason, the way "no answer"
+    is never shown as zero.
+    """
+    kind = facts["kind"]
+    builtin: list[dict] = []
+    if kind in ("switch", "host"):
+        if node_id.startswith("sw:"):
+            scheme = config.web_scheme(facts["ip"])
+        elif kind == "switch":
+            scheme = config.context_menu.web_scheme
+        else:
+            scheme = "http"
+        for key, template in (("web", scheme + "://{ip}"),
+                              ("ssh", "ssh://{ip}")):
+            url, missing = menu.expand(template, facts)
+            builtin.append({"key": key, "url": url, "missing": missing})
+    custom: list[dict] = []
+    for link in config.context_menu.links:
+        if not link.applies(kind):
+            continue
+        url, missing = menu.expand(link.url, facts)
+        custom.append({"label": link.label, "url": url, "missing": missing})
+    return builtin, custom
+
+
+@app.get("/api/node-menu")
+async def api_node_menu(id: str = Query(...)):
+    """What the right-click menu of one node can offer."""
+    nodes = await asyncio.to_thread(_node_directory)
+    facts = nodes.get(id)
+    if facts is None:
+        return JSONResponse(
+            {"error": "unknown_node", "node": id}, status_code=404
+        )
+    builtin, custom = _menu_links(id, facts)
+    return {
+        "node": {"id": id, **facts},
+        "links": builtin,
+        "custom": custom,
+        "tools": _tool_state(),
+    }
+
+
+class ActionBody(BaseModel):
+    action: str
+    nodes: list[str]
+
+
+def _refuse(error: str, status: int, **extra) -> JSONResponse:
+    return JSONResponse({"error": error, **extra}, status_code=status)
+
+
+@app.get("/api/actions")
+async def api_actions_state() -> dict:
+    return {**_tool_state(), "running": jobs.running(),
+            "max_running": config.context_menu.max_running}
+
+
+@app.post("/api/actions")
+async def api_start_action(body: ActionBody, request: Request):
+    """Starts ping or traceroute from this machine; returns the job.
+
+    Node ids in, never addresses: an id MoonLan does not know is
+    refused, and so is an address sent in place of one. Whatever the
+    tool is run against was found by MoonLan itself.
+    """
+    if body.action not in probes.ACTIONS:
+        return _refuse("unknown_action", 400, action=body.action)
+    ids = list(dict.fromkeys(body.nodes))
+    if not ids:
+        return _refuse("no_targets", 400)
+    limit = config.context_menu.max_targets
+    if len(ids) > limit:
+        # refused, not trimmed: a silently shortened list reads as
+        # "these are all of them"
+        return _refuse("too_many_targets", 400, limit=limit, count=len(ids))
+    if body.action == "traceroute" and len(ids) > 1:
+        return _refuse("traceroute_one", 400)
+    if body.action == "ping" and not tools.get("ping"):
+        return _refuse("tool_missing", 503, tool="ping")
+    if body.action == "traceroute" and not tools.get("traceroute"):
+        return _refuse("tool_missing", 503, tool="traceroute")
+    nodes = await asyncio.to_thread(_node_directory)
+    unknown = [node_id for node_id in ids if node_id not in nodes]
+    if unknown:
+        return _refuse(
+            "unknown_nodes", 404, nodes=unknown[:10],
+            # the one mistake worth naming: an address is not a node id
+            addresses=[n for n in unknown if probes.checked_address(n)],
+        )
+    targets = [
+        probes.Target(
+            node=node_id, kind=nodes[node_id]["kind"],
+            name=nodes[node_id]["name"] or nodes[node_id]["ip"] or node_id,
+            ip=nodes[node_id]["ip"],
+            monitor={
+                "ping_up": nodes[node_id]["ping_up"],
+                "last_ping_ok": nodes[node_id]["last_ping_ok"],
+            },
+        )
+        for node_id in ids
+    ]
+    try:
+        job = jobs.start(
+            body.action, targets, config.context_menu.max_running
+        )
+    except probes.Busy:
+        return _refuse("busy", 429, limit=config.context_menu.max_running)
+    client = request.client.host if request.client else "?"
+    shown = ", ".join(
+        f"{t.node} ({t.ip or 'no address'})" for t in targets[:5]
+    ) + (f" and {len(targets) - 5} more" if len(targets) > 5 else "")
+    log.info(
+        "Menu: %s of %s requested from %s (job %s)",
+        body.action, shown, client, job.id,
+    )
+    return job.as_dict()
+
+
+@app.get("/api/actions/{job_id}")
+async def api_action_state(job_id: str):
+    job = jobs.get(job_id)
+    if job is None:
+        return _refuse("unknown_job", 404)
+    return job.as_dict()
+
+
+@app.get("/api/layout")
+async def api_layout() -> dict:
+    """Saved node positions, and how they compare with the map."""
+    saved = _current_offsets(await asyncio.to_thread(db.layout))
+    present = _layout_node_ids()
+    return {
+        "nodes": saved,
+        "saved_at": await asyncio.to_thread(db.layout_saved_at),
+        # When somebody last reset the whole layout. An open page that
+        # sees this move treats it as a reset of its own; the rows alone
+        # could not tell it that.
+        "cleared_at": await asyncio.to_thread(db.layout_cleared_at),
+        # Nodes on the map with no saved position: since v0.7.3 that is
+        # everything nobody pinned, laid out again on every load from
+        # the pinned nodes. A count, not a list of gaps to fill.
+        "missing": sorted(present - set(saved)),
+        # …and the other direction: a saved position whose node is not
+        # on the map. Kept on purpose — a device switched off for the
+        # night comes back to its place — and only forgotten by age.
+        "orphans": sorted(set(saved) - present),
+    }
+
+
+@app.put("/api/layout")
+async def api_put_layout(body: LayoutBody) -> dict:
+    """Stores the whole picture as it is on screen right now.
+
+    With `only_new`, only nodes nobody has placed yet: the rest keep
+    what they have, and the answer says what that is, so the page can
+    take it instead of believing its own copy.
+    """
+    positions = {
+        node_id: pos.model_dump(exclude_none=True)
+        for node_id, pos in body.nodes.items()
+    }
+    if body.only_new:
+        stored, existing = await asyncio.to_thread(
+            db.add_new_positions, positions
+        )
+    else:
+        await asyncio.to_thread(db.save_layout, positions)
+        stored, existing = list(positions), {}
+    if stored:
+        await asyncio.to_thread(
+            db.add_event, time.time(), "layout_saved", "",
+            f"{len(stored)} node(s)",
+        )
+        log.info("Map layout saved: %d node(s)", len(stored))
+    return {
+        "saved": len(stored),
+        "stored": stored,
+        "existing": existing,
+        "saved_at": await asyncio.to_thread(db.layout_saved_at),
+    }
+
+
+# How many node ids a journal entry about a layout action names; the
+# count is always there, the list only while it is short enough to read
+LAYOUT_EVENT_IDS = 5
+
+
+async def _journal_layout_action(event: str, node_ids: list[str]) -> None:
+    """One journal entry per action, however many nodes it touched.
+
+    Pinning and releasing were not in the journal at all, which is why
+    a pin wiped out by another page's save was visible to nobody. The
+    details are data, not a sentence — the page words them in its own
+    language and by the nodes' captions. When sign-in arrives (v0.7.3)
+    this is the entry that gets the user's name.
+    """
+    if not node_ids:
+        return
+    details = json.dumps({
+        "n": len(node_ids), "ids": node_ids[:LAYOUT_EVENT_IDS],
+    })
+    await asyncio.to_thread(db.add_event, time.time(), event, "", details)
+
+
+async def _store_hand_placed(positions: dict[str, NodePosition]) -> dict:
+    """Stores nodes placed or released by hand, journalled per kind.
+
+    A node sent without `pinned` is pinned: this is the hand putting it
+    somewhere. Released (`pinned: false`) is forgotten: only what a
+    person placed is kept, and a released node is laid out from the
+    pinned ones on the next load like everything else.
+    """
+    rows = {
+        node_id: {"x": pos.x, "y": pos.y, "pinned": True}
+        for node_id, pos in positions.items()
+        if pos.pinned is None or pos.pinned
+    }
+    released = [node_id for node_id in positions if node_id not in rows]
+    if rows:
+        await asyncio.to_thread(db.save_layout, rows)
+    if released:
+        await asyncio.to_thread(db.forget_positions, released)
+    pinned = list(rows)
+    await _journal_layout_action("layout_pinned", pinned)
+    await _journal_layout_action("layout_released", released)
+    return {"pinned": pinned, "released": released}
+
+
+@app.patch("/api/layout")
+async def api_patch_positions(body: LayoutBody) -> dict:
+    """Several nodes placed or released in one action — a dragged
+    selection, `P` on a selection, one item of the menu — and how the
+    nodes around each placed one stood at that moment."""
+    result = await _store_hand_placed(body.nodes)
+    result["neighbours"] = {}
+    for anchor, offsets in body.neighbours.items():
+        result["neighbours"][anchor] = await asyncio.to_thread(
+            db.set_neighbours, anchor,
+            {node_id: {"x": o.x, "y": o.y} for node_id, o in offsets.items()},
+        )
+    return result
+
+
+@app.patch("/api/layout/{node_id:path}")
+async def api_patch_node_position(node_id: str, body: NodePosition) -> dict:
+    """One node, moved by hand — pinned unless told otherwise."""
+    await _store_hand_placed({node_id: body})
+    pinned = True if body.pinned is None else body.pinned
+    return {"node_id": node_id, "x": body.x, "y": body.y, "pinned": pinned}
+
+
+@app.delete("/api/layout/{node_id:path}")
+async def api_delete_node_position(node_id: str):
+    """Forgets one node: it goes back under the physics engine.
+
+    The page no longer releases a node this way — it keeps the row and
+    clears the pin — but a page still running an older script does, so
+    it is journalled as the release it means.
+    """
+    removed = await asyncio.to_thread(db.forget_node_position, node_id)
+    if not removed:
+        return JSONResponse(
+            {"error": "no saved position for this node"}, status_code=404
+        )
+    await _journal_layout_action("layout_released", [node_id])
+    return {"node_id": node_id, "removed": True}
+
+
+@app.delete("/api/layout")
+async def api_clear_layout() -> dict:
+    """Forgets the whole layout. The map is laid out from scratch."""
+    removed = await asyncio.to_thread(db.clear_layout)
+    cleared_at = time.time()
+    await asyncio.to_thread(
+        db.add_event, cleared_at, "layout_cleared", "",
+        f"{removed} node(s)",
+    )
+    log.info("Map layout cleared: %d node(s) forgotten", removed)
+    # the page that asked for it must not mistake its own reset for
+    # somebody else's on the next refresh
+    return {"removed": removed, "cleared_at": cleared_at}
+
+
 async def _scan_once() -> None:
     """A manual scan, recording a failure the same way the loop does."""
     try:
@@ -2319,11 +2940,63 @@ async def api_status() -> dict:
         "last_error": state.last_error,
         "last_error_ts": state.last_error_ts,
         **state.scan_progress(),
+        "layout_saved_at": await asyncio.to_thread(db.layout_saved_at),
         "uptime_hint": time.time(),
         "open_fds": open_fds,
         "rss_kb": rss_kb,
     }
 
 
+# The page's own files, addressed in index.html by what is in them
+VERSIONED_ASSETS = ("app.js", "i18n.js", "style.css")
+
+
+def _index_html() -> str:
+    """index.html with each of the page's files named by its content.
+
+    `no-cache` below only helps a browser that has been told it: a
+    copy cached before this header existed carries no such instruction
+    and is still "fresh" by the browser's own reckoning. After the
+    upgrade that introduced the header, a page went on running with a
+    new app.js and an old i18n.js — and showed translation keys where
+    the journal should have said "Placed by hand". A file whose content
+    changes gets a new address, and no cache has a copy of that.
+    """
+    html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
+    for name in VERSIONED_ASSETS:
+        digest = hashlib.sha1((WEB_DIR / name).read_bytes()).hexdigest()[:12]
+        html = html.replace(f'"{name}"', f'"{name}?v={digest}"')
+    return html
+
+
+@app.get("/", include_in_schema=False)
+@app.get("/index.html", include_in_schema=False)
+async def index_page() -> HTMLResponse:
+    return HTMLResponse(
+        await asyncio.to_thread(_index_html),
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+class RevalidatedStaticFiles(StaticFiles):
+    """The web UI, which the browser must re-check on every load.
+
+    Served without a Cache-Control header, a file last modified weeks
+    ago is "fresh" by the browser's own reckoning for days: after an
+    upgrade the page went on running the previous app.js, and a fix to
+    the map reached nobody until their cache happened to expire.
+    `no-cache` is not "do not cache" — the browser keeps its copy and
+    asks each time, and an unchanged file costs a 304.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # The static web UI comes last so it does not shadow /api/*
-app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
+app.mount(
+    "/", RevalidatedStaticFiles(directory=str(WEB_DIR), html=True),
+    name="web",
+)
