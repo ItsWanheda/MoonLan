@@ -523,6 +523,12 @@ const I18N = {
       "Visible through the trunk {switch} {port}. The exact place is "
       + "unknown: the devices are somewhere past that cable.",
     trunkGroupSilent: "Of those, not answering",
+    liveOverview: "Live overview",
+    hudSwitches: "switches",
+    hudHosts: "devices",
+    hudLinks: "links",
+    hudOnline: "online",
+    hudAlerts: "alerts",
   },
   ru: {
     title: "MoonLan — карта сети",
@@ -1042,5 +1048,11 @@ const I18N = {
       "Видно через магистраль {switch} {port}. Точное место "
       + "неизвестно: устройства где-то за этим кабелем.",
     trunkGroupSilent: "Из них не отвечают",
+    liveOverview: "Обзор сети",
+    hudSwitches: "коммутаторы",
+    hudHosts: "устройства",
+    hudLinks: "связи",
+    hudOnline: "онлайн",
+    hudAlerts: "тревоги",
   },
 };
