@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.7.4 — 2026-09-24
+
+Operational polish and a small service-level feature release.
+
+- Added a lightweight `/api/health` liveness endpoint with explicit no-cache semantics and the latest scan/error state.
+- Added a regression test for the health endpoint and isolated its shared service state.
+- Restructured the main README around installation, architecture, API, security, testing, and documentation.
+- Added focused contributor, security, configuration, architecture, API, and operations guides.
+
 All notable changes to MoonLan, newest first. Dates are release dates;
 every version was verified on the production network it was written
 for before the next one started.
