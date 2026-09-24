@@ -2006,6 +2006,29 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="MoonLan", version=__version__, lifespan=lifespan)
 
 
+@app.get("/api/health")
+async def api_health() -> JSONResponse:
+    """Lightweight liveness endpoint for monitors and service managers.
+
+    This endpoint deliberately does not require a successful SNMP scan:
+    a slow or unavailable network must not make the web process look dead.
+    Detailed scan health remains available through ``/api/status``.
+    """
+    snapshot = state.as_dict()
+    return JSONResponse(
+        {
+            "status": "ok",
+            "version": __version__,
+            "scanning": snapshot["scanning"],
+            "last_scan": snapshot["last_scan"],
+            "last_scan_ok": snapshot["last_scan_ok"],
+            "last_error": snapshot["last_error"],
+            "last_error_ts": snapshot["last_error_ts"],
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/api/topology")
 async def api_topology() -> JSONResponse:
     topo = state.as_dict()
