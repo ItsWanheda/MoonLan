@@ -200,13 +200,17 @@ class HealthEndpointTest(unittest.TestCase):
         self._saved = (
             server.state.scanning, server.state.last_scan,
             server.state.last_scan_ok, server.state.last_error,
-            server.state.last_error_ts,
+            server.state.last_error_ts, server.state.scan_started_at,
+            server.state.scan_total, server.state.scan_done,
+            list(server.state.scan_over_budget),
         )
 
     def tearDown(self):
         (server.state.scanning, server.state.last_scan,
          server.state.last_scan_ok, server.state.last_error,
-         server.state.last_error_ts) = self._saved
+         server.state.last_error_ts, server.state.scan_started_at,
+         server.state.scan_total, server.state.scan_done,
+         server.state.scan_over_budget) = self._saved
 
     def test_health_is_liveness_only_and_uncached(self):
         server.state.scanning = True
@@ -214,6 +218,10 @@ class HealthEndpointTest(unittest.TestCase):
         server.state.last_scan_ok = 100.0
         server.state.last_error = "TimeoutError: demo"
         server.state.last_error_ts = 120.0
+        server.state.scan_started_at = 0.0
+        server.state.scan_total = 0
+        server.state.scan_done = 0
+        server.state.scan_over_budget = []
 
         response = asyncio.run(server.api_health())
 
