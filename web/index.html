@@ -55,6 +55,18 @@
 
     <section id="map-panel">
       <div id="network"></div>
+      <div id="map-hud" class="map-hud" aria-label="Network summary">
+        <div class="hud-brand">
+          <span class="hud-pulse" aria-hidden="true"></span>
+          <span data-i18n="liveOverview">Live overview</span>
+        </div>
+        <div class="hud-stat"><strong id="hud-switches">0</strong><span data-i18n="hudSwitches">switches</span></div>
+        <div class="hud-stat"><strong id="hud-hosts">0</strong><span data-i18n="hudHosts">devices</span></div>
+        <div class="hud-stat"><strong id="hud-links">0</strong><span data-i18n="hudLinks">links</span></div>
+        <div class="hud-stat hud-ok"><strong id="hud-up">0</strong><span data-i18n="hudOnline">online</span></div>
+        <div class="hud-stat hud-alert"><strong id="hud-alerts">0</strong><span data-i18n="hudAlerts">alerts</span></div>
+        <div id="hud-scan" class="hud-scan hidden"></div>
+      </div>
       <div id="details" class="panel hidden">
         <div class="panel-head">
           <h3 id="details-title"></h3>
