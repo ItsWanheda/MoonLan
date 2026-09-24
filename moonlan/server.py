@@ -45,6 +45,10 @@ log = logging.getLogger("moonlan")
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
+# Monotonic clock: unlike wall time, it cannot jump backwards when NTP or
+# an administrator adjusts the system clock.
+SERVICE_STARTED_MONOTONIC = time.monotonic()
+
 state = TopologyState()
 config: Config = load_config()
 # In demo mode the DB lives in memory so the real one is not polluted
@@ -2014,16 +2018,25 @@ async def api_health() -> JSONResponse:
     a slow or unavailable network must not make the web process look dead.
     Detailed scan health remains available through ``/api/status``.
     """
-    snapshot = state.as_dict()
+    # Do not call state.as_dict() here: health checks can run every
+    # few seconds, while as_dict() copies the entire topology and host map.
+    progress = state.scan_progress()
     return JSONResponse(
         {
             "status": "ok",
             "version": __version__,
-            "scanning": snapshot["scanning"],
-            "last_scan": snapshot["last_scan"],
-            "last_scan_ok": snapshot["last_scan_ok"],
-            "last_error": snapshot["last_error"],
-            "last_error_ts": snapshot["last_error_ts"],
+            "uptime_seconds": round(
+                time.monotonic() - SERVICE_STARTED_MONOTONIC, 1
+            ),
+            "scanning": progress["scanning"],
+            "scan_started_at": progress["scan_started_at"],
+            "scan_done": progress["scan_done"],
+            "scan_total": progress["scan_total"],
+            "scan_over_budget": progress["scan_over_budget"],
+            "last_scan": state.last_scan,
+            "last_scan_ok": state.last_scan_ok,
+            "last_error": state.last_error,
+            "last_error_ts": state.last_error_ts,
         },
         headers={"Cache-Control": "no-store"},
     )
