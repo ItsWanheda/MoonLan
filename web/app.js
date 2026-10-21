@@ -35,6 +35,8 @@ const els = {
   emptyState: document.getElementById("empty-state"),
   freezeBtn: document.getElementById("freeze-btn"),
   arrangeBtn: document.getElementById("arrange-btn"),
+  portLabelsBtn: document.getElementById("port-labels-btn"),
+  portLabelsMenu: document.getElementById("port-labels-menu"),
   nodeMenu: document.getElementById("node-menu"),
   actions: document.getElementById("actions"),
   actionsTitle: document.getElementById("actions-title"),
@@ -143,6 +145,7 @@ function applyStatic() {
   els.langEn.classList.toggle("active", lang === "en");
   applyFreeze();
   applySidebarCollapsed();
+  applyPortLabelMode();
 }
 
 function setLang(newLang) {
@@ -2247,6 +2250,7 @@ function moreItems() {
 
 function openMoreMenu() {
   closeNodeMenu();
+  closePortLabelsMenu(false);
   els.moreMenu.replaceChildren(...menuButtons(moreItems(), MORE_GROUPS, (item) => {
     closeMoreMenu(true);
     item.run();
@@ -2333,6 +2337,12 @@ function menuButtons(items, groups, pick) {
       button.setAttribute("role", "menuitem");
       button.dataset.key = item.key;
       button.textContent = item.label;
+      if (item.checked !== undefined) {
+        // one of several modes, the current one ticked
+        button.setAttribute("role", "menuitemradio");
+        button.setAttribute("aria-checked", item.checked ? "true" : "false");
+        button.classList.add("radio");
+      }
       if (item.danger) button.classList.add("danger");
       if (item.disabled) {
         // not the `disabled` attribute: a disabled button shows no
@@ -2359,7 +2369,7 @@ function menuButtons(items, groups, pick) {
 /* Arrow keys, Home and End move through a menu's items; Escape closes
    it (with the focus back where the menu came from); Tab leaves it. */
 function menuKeys(event, menu, close) {
-  const items = [...menu.querySelectorAll('[role="menuitem"]')];
+  const items = [...menu.querySelectorAll('[role^="menuitem"]')];
   if (!items.length) return;
   const at = items.indexOf(document.activeElement);
   let next = null;
@@ -3277,6 +3287,20 @@ function buildGraphData() {
     return edge;
   };
 
+  /* Which port is at which end, for the tags on the lines. Only an end
+     that is the switch itself: the line of a device behind a group or
+     a bridge starts there, and the port is on the line into the switch
+     already. */
+  const markPort = (edge, ip, port, members) => {
+    if (!ip) return edge;
+    const end = "sw:" + ip;
+    if (edge.from !== end && edge.to !== end) return edge;
+    edge.portAt = { ...edge.portAt, [end]: portShort(port, members) };
+    return edge;
+  };
+  // a line out of a switch's port: the loop mark and the port's tag
+  const fromPort = (edge, ip, port) => markPort(markLoop(edge, ip, port), ip, port);
+
   for (const sw of topology.switches) {
     // a switch_down alarm paints the node border red; so does a loop,
     // which is the one thing on this map that is taking a segment down
@@ -3354,6 +3378,9 @@ function buildGraphData() {
     }
     markLoop(edge, link.a, link.a_port);
     markLoop(edge, link.b, link.b_port);
+    // an aggregate is tagged with its members on each side
+    markPort(edge, link.a, link.a_port, isLacp && link.lag.a_members);
+    markPort(edge, link.b, link.b_port, isLacp && link.lag.b_members);
     edges.push(edge);
   }
 
@@ -3372,7 +3399,7 @@ function buildGraphData() {
       borderWidth: 2,
       font: nodeFont(ps.id),
     }));
-    edges.push(markLoop({
+    edges.push(fromPort({
       id: "psedge:" + ps.id,
       from: "sw:" + ps.switch,
       to: ps.id,
@@ -3409,7 +3436,7 @@ function buildGraphData() {
       margin: 8,
       font: { color: colors.dim, size: 12 },
     }));
-    edges.push(markLoop({
+    edges.push(fromPort({
       id: "bredge:" + bridge.id,
       from: "sw:" + bridge.switch,
       to: bridge.id,
@@ -3435,7 +3462,7 @@ function buildGraphData() {
       borderWidth: 2,
       font: nodeFont(external.id),
     }));
-    edges.push(markLoop({
+    edges.push(fromPort({
       id: "extedge:" + external.id,
       // the provider's switch is on the cable and everything else is
       // behind IT: mb0 -> CE6851 -> external network
@@ -3466,7 +3493,7 @@ function buildGraphData() {
       margin: 6,
       font: { color: colors.dim, size: 11 },
     }));
-    edges.push(markLoop({
+    edges.push(fromPort({
       id: "trunkedge:" + group.id,
       // off whatever stands on that cable, if anything does
       from: group.via || "sw:" + group.switch,
@@ -3492,7 +3519,7 @@ function buildGraphData() {
       borderWidth: 2,
       font: nodeFont(group.id),
     }));
-    edges.push(markLoop({
+    edges.push(fromPort({
       id: "offedge:" + group.id,
       // the live devices of this port hang off the bridge or the
       // unmanaged switch on its cable; the quiet ones belong there too
@@ -3532,7 +3559,7 @@ function buildGraphData() {
       borderWidth: isRouter ? 2 : 1,
       font: nodeFont("host:" + host.mac),
     }));
-    edges.push(markLoop({
+    edges.push(fromPort({
       id: "hostedge:" + host.mac,
       from: host.via || "sw:" + host.switch,
       to: "host:" + host.mac,
@@ -3547,6 +3574,13 @@ function buildGraphData() {
   }
 
   curveParallelEdges(edges);
+  portEdges = new Map(
+    edges.filter((edge) => edge.portAt).map((edge) => [edge.id, {
+      id: edge.id, from: edge.from, to: edge.to, ends: edge.portAt,
+      // a red line gets red tags
+      alarm: !!(edge.color && edge.color.color === colors.alarm),
+    }])
+  );
 
   // The physics engine walks its nodes in the order they were added.
   // It is not random, so two pages that start from the same positions
@@ -3590,6 +3624,255 @@ function curveParallelEdges(edges) {
       };
     });
   }
+}
+
+/* ---------- port numbers on the lines ----------
+
+   A tag at the end of a line with the number of the port it leaves
+   from, at the node the port belongs to (v0.7.9): off, for the
+   selection, or everywhere. Drawn on the canvas after vis has drawn
+   the map, at 11 px on the screen whatever the zoom. */
+
+const PORT_LABELS_KEY = "moonlan-port-labels";
+const PORT_LABEL_MODES = ["off", "selected", "all"];
+let portLabelMode = PORT_LABEL_MODES.includes(localStorage.getItem(PORT_LABELS_KEY))
+  ? localStorage.getItem(PORT_LABELS_KEY)
+  : "selected";
+// edge id -> {id, from, to, ends: {node id: tag text}, alarm}
+let portEdges = new Map();
+// "Everywhere" stops below this zoom: the whole network in tags is a
+// green rash, not information
+const PORT_LABELS_MIN_SCALE = 0.5;
+const PORT_TAG_FONT = 11; // px on the screen
+const PORT_TAG_PAD_X = 4;
+const PORT_TAG_HEIGHT = 15;
+const PORT_TAG_GAP = 6; // between the node's box and the tag, on the screen
+
+/* A port's name as it fits on a tag. A number or a short name as it
+   is; a long one by the number it ends with ("GigabitEthernet1/0/3" →
+   "1/0/3", "… Port 3" → "3"); a LAG trunk's synthetic "bridge-port N"
+   as "LAG"; an aggregate by the members of this side, up to two in
+   full ("3,4"), more as the first and how many others ("25+3") — and
+   past 8 characters without the prefix they share ("Gi0/3,Gi0/4" →
+   "3,4"); no port at all as "?". */
+function portShort(port, members) {
+  if (members && members.length) {
+    let names = members.map((member) => portShort(member));
+    const text = (list) =>
+      list.length <= 2 ? list.join(",") : list[0] + "+" + (list.length - 1);
+    if (text(names).length > 8) {
+      let shared = names[0];
+      for (const name of names) {
+        while (!name.startsWith(shared)) shared = shared.slice(0, -1);
+      }
+      // a number is not cut in two: "Gi0/25", "Gi0/26" share "Gi0/"
+      shared = shared.replace(/\d+$/, "");
+      if (names.every((name) => name.length > shared.length)) {
+        names = names.map((name) => name.slice(shared.length));
+      }
+    }
+    return text(names);
+  }
+  const name = port == null ? "" : String(port).trim();
+  if (!name) return "?";
+  if (/^bridge-port \d+$/.test(name)) return "LAG";
+  if (name.length <= 8) return name;
+  const tail = name.match(/(\d+(?:[/.:]\d+)*)(?!.*\d)/);
+  return tail ? tail[1] : name.slice(0, 7) + "…";
+}
+
+/* Which tags to draw, as [edge entry, node id] pairs. A selected switch
+   gets its own ends only — never the far end of its lines, which is
+   somebody else's port. A selected device, group or bridge gets the
+   switch end of its line: the port it is plugged into. A selected line
+   gets both ends, but only while no node is selected: vis selects
+   every line of a selected node along with it. */
+function portTagsToDraw() {
+  const tags = [];
+  if (portLabelMode === "all") {
+    for (const entry of portEdges.values()) {
+      for (const end of Object.keys(entry.ends)) tags.push([entry, end]);
+    }
+    return tags;
+  }
+  const nodes = network.getSelectedNodes();
+  if (nodes.length) {
+    const seen = new Set();
+    for (const id of nodes) {
+      for (const edgeId of network.getConnectedEdges(id)) {
+        const entry = portEdges.get(edgeId);
+        if (!entry) continue;
+        const ends = id in entry.ends
+          ? [id]
+          : id.startsWith("sw:")
+          ? []
+          : Object.keys(entry.ends);
+        for (const end of ends) {
+          const key = edgeId + "\u0000" + end;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          tags.push([entry, end]);
+        }
+      }
+    }
+    return tags;
+  }
+  for (const edgeId of network.getSelectedEdges()) {
+    const entry = portEdges.get(edgeId);
+    if (!entry) continue;
+    for (const end of Object.keys(entry.ends)) tags.push([entry, end]);
+  }
+  return tags;
+}
+
+/* A point of a line as it is drawn, t running from `start` (0) to the
+   other end (1). A straight line is a segment between the two nodes;
+   a parallel link is a curve of vis's own, and its points come from
+   vis — edgeType.getPoint, internal API of vis-network 9.1.9, which
+   index.html pins. */
+function edgePointFn(entry, start, positions) {
+  const other = start === entry.from ? entry.to : entry.from;
+  const a = positions[start];
+  const b = positions[other];
+  if (!a || !b) return null;
+  const edge = network.body.edges[entry.id];
+  const smooth = edge && edge.options && edge.options.smooth;
+  if (smooth && smooth.enabled && edge.edgeType && edge.edgeType.getPoint) {
+    const reversed = start !== entry.from;
+    return (t) => edge.edgeType.getPoint(reversed ? 1 - t : t);
+  }
+  return (t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+}
+
+/* The centre of a tag w × h at the `end` of a line: the first point of
+   the line outside the node's box grown by the gap and by half the tag,
+   so the tag sits just past the node. Never past its half of the line:
+   on a short one the two tags may come up to the speed in the middle,
+   but not onto each other. */
+function portTagCenter(entry, end, positions, w, h, scale) {
+  const point = edgePointFn(entry, end, positions);
+  if (!point) return null;
+  const box = network.getBoundingBox(end);
+  if (!box) return null;
+  const gap = PORT_TAG_GAP / scale;
+  const left = box.left - gap - w / 2;
+  const right = box.right + gap + w / 2;
+  const top = box.top - gap - h / 2;
+  const bottom = box.bottom + gap + h / 2;
+  const inside = (p) => p.x > left && p.x < right && p.y > top && p.y < bottom;
+  const a = point(0);
+  const b = point(1);
+  const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+  // how far the tag reaches along the line from its centre
+  const reach = (w / 2) * Math.abs(b.x - a.x) / length +
+    (h / 2) * Math.abs(b.y - a.y) / length + 1 / scale;
+  const most = Math.max(0, 0.5 - reach / length);
+  if (inside(point(most))) return point(most);
+  // the line leaves the box once: bisect for where
+  let lo = 0;
+  let hi = most;
+  for (let i = 0; i < 12; i++) {
+    const mid = (lo + hi) / 2;
+    if (inside(point(mid))) lo = mid;
+    else hi = mid;
+  }
+  return point(hi);
+}
+
+// tag text -> its width at PORT_TAG_FONT px, measured once
+const portTagWidths = new Map();
+
+function portTagFont(size) {
+  return `600 ${size}px system-ui, sans-serif`;
+}
+
+function portTagWidth(ctx, text) {
+  let width = portTagWidths.get(text);
+  if (width === undefined) {
+    ctx.save();
+    ctx.font = portTagFont(PORT_TAG_FONT);
+    width = ctx.measureText(text).width;
+    ctx.restore();
+    portTagWidths.set(text, width);
+  }
+  return width;
+}
+
+/* Drawn from afterDrawing, over the lines and the nodes */
+function drawPortTags(ctx) {
+  if (portLabelMode === "off" || !portEdges.size) return;
+  const scale = network.getScale();
+  if (portLabelMode === "all" && scale < PORT_LABELS_MIN_SCALE) return;
+  const tags = portTagsToDraw();
+  if (!tags.length) return;
+  const positions = network.getPositions();
+  const h = PORT_TAG_HEIGHT / scale;
+  ctx.save();
+  ctx.font = portTagFont(PORT_TAG_FONT / scale);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const [entry, end] of tags) {
+    const text = entry.ends[end];
+    const w = (portTagWidth(ctx, text) + PORT_TAG_PAD_X * 2) / scale;
+    const at = portTagCenter(entry, end, positions, w, h, scale);
+    if (!at) continue;
+    ctx.fillStyle = entry.alarm ? colors.alarm : colors.ok;
+    roundedRect(ctx, at.x - w / 2, at.y - h / 2, w, h, 3 / scale);
+    ctx.fill();
+    ctx.fillStyle = colors.panel;
+    ctx.fillText(text, at.x, at.y + 0.5 / scale);
+  }
+  ctx.restore();
+}
+
+function applyPortLabelMode() {
+  // the menu's item, in the middle of a sentence
+  const item = t("portLabels_" + portLabelMode);
+  const mode = item.charAt(0).toLocaleLowerCase(lang) + item.slice(1);
+  labelIcon(els.portLabelsBtn, fmt("portLabelsBtn", { mode }));
+  els.portLabelsBtn.classList.toggle("active", portLabelMode !== "off");
+  els.portLabelsMenu.setAttribute("aria-label", t("portLabelsMenu"));
+}
+
+function setPortLabelMode(mode) {
+  portLabelMode = mode;
+  localStorage.setItem(PORT_LABELS_KEY, mode);
+  applyPortLabelMode();
+  if (network) network.redraw();
+}
+
+function portLabelItems() {
+  return PORT_LABEL_MODES.map((mode) => ({
+    key: mode, group: "mode", label: t("portLabels_" + mode),
+    checked: mode === portLabelMode,
+  }));
+}
+
+function openPortLabelsMenu() {
+  closeNodeMenu();
+  closeMoreMenu(false);
+  els.portLabelsMenu.replaceChildren(...menuButtons(portLabelItems(), ["mode"], (item) => {
+    closePortLabelsMenu(true);
+    setPortLabelMode(item.key);
+  }));
+  els.portLabelsMenu.classList.remove("hidden");
+  els.portLabelsBtn.setAttribute("aria-expanded", "true");
+  // under the button, its left edge on the button's
+  const button = els.portLabelsBtn.getBoundingClientRect();
+  const width = els.portLabelsMenu.offsetWidth;
+  els.portLabelsMenu.style.top = button.bottom + 6 + "px";
+  els.portLabelsMenu.style.left =
+    Math.max(4, Math.min(button.left, window.innerWidth - width - 8)) + "px";
+  const current = els.portLabelsMenu.querySelector('[aria-checked="true"]');
+  if (current) current.focus();
+}
+
+function closePortLabelsMenu(returnFocus) {
+  if (els.portLabelsMenu.classList.contains("hidden")) return;
+  els.portLabelsMenu.classList.add("hidden");
+  els.portLabelsMenu.replaceChildren();
+  els.portLabelsBtn.setAttribute("aria-expanded", "false");
+  if (returnFocus) els.portLabelsBtn.focus();
 }
 
 /* ---------- label backdrop for the selected node ---------- */
@@ -3807,6 +4090,10 @@ function renderGraph() {
       }
       if (selectedNodeId) drawLabelBackdrop(ctx, selectedNodeId, true);
     });
+    network.on("afterDrawing", drawPortTags);
+    // the tags follow the selection
+    network.on("select", () => network.redraw());
+    network.on("deselect", () => network.redraw());
     network.on("hoverNode", (params) => {
       hoveredNodeId = params.node;
       network.redraw();
@@ -5309,9 +5596,20 @@ for (const th of document.querySelectorAll("#ports th[data-sort]")) {
 els.freezeBtn.addEventListener("click", toggleFreeze);
 els.sidebarToggle.addEventListener("click", toggleSidebar);
 els.arrangeBtn.addEventListener("click", () => allowed(els.arrangeBtn) && toggleArrangeMode());
+els.portLabelsBtn.addEventListener("click", () => {
+  if (els.portLabelsMenu.classList.contains("hidden")) openPortLabelsMenu();
+  else closePortLabelsMenu(true);
+});
+els.portLabelsMenu.addEventListener("keydown", (event) =>
+  menuKeys(event, els.portLabelsMenu, closePortLabelsMenu)
+);
 document.addEventListener("click", (event) => {
   if (!els.nodeMenu.contains(event.target)) closeNodeMenu();
   if (!els.userMenu.contains(event.target)) closeUserMenu(false);
+  if (!els.portLabelsMenu.contains(event.target) &&
+      !els.portLabelsBtn.contains(event.target)) {
+    closePortLabelsMenu(false);
+  }
   if (!els.moreMenu.contains(event.target) && !els.moreBtn.contains(event.target)) {
     closeMoreMenu(false);
   }
@@ -5362,6 +5660,7 @@ document.addEventListener("keydown", (event) => {
     setSelectedNode(null);
     closeNodeMenu();
     closeMoreMenu(false);
+    closePortLabelsMenu(false);
   }
 });
 

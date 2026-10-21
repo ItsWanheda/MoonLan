@@ -9,6 +9,11 @@ const I18N = {
     journalBtn: "Journal",
     sidebarToggle: "List and search",
     freezeBtn: "Freeze layout",
+    portLabelsBtn: "Port numbers on the lines: {mode}",
+    portLabelsMenu: "Port numbers on the lines",
+    portLabels_off: "Off",
+    portLabels_selected: "For the selection",
+    portLabels_all: "Everywhere",
     layoutPinnedMark: "pinned: {n}",
     layoutPinnedHint:
       "Pinned nodes stay where they are for everyone, and only they are "
@@ -766,6 +771,11 @@ const I18N = {
     journalBtn: "Журнал",
     sidebarToggle: "Список и поиск",
     freezeBtn: "Заморозить раскладку",
+    portLabelsBtn: "Номера портов на линиях: {mode}",
+    portLabelsMenu: "Номера портов на линиях",
+    portLabels_off: "Выключено",
+    portLabels_selected: "Для выделенного",
+    portLabels_all: "Везде",
     layoutPinnedMark: "закреплено: {n}",
     layoutPinnedHint:
       "Закреплённые узлы стоят на своих местах для всех, и сохраняются "

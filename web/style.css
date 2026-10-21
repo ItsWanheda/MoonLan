@@ -180,6 +180,12 @@ button:hover { background: rgba(232, 228, 213, 0.1); }
   color: #d9b26b;
   background: rgba(217, 178, 107, 0.14);
 }
+/* in the colour of the tags it draws */
+#port-labels-btn.active {
+  border-color: var(--ok);
+  color: var(--ok);
+  background: rgba(127, 201, 143, 0.14);
+}
 button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 
 /* ---------- two panels ---------- */
@@ -834,6 +840,13 @@ body.gated .toolbar > button { display: none; }
 }
 
 .context-menu button:hover { background: var(--bg-hover); }
+/* one of several modes: the current one ticked */
+.context-menu button.radio::before {
+  content: "";
+  display: inline-block;
+  width: 1.3em;
+}
+.context-menu button.radio[aria-checked="true"]::before { content: "✓"; color: var(--ok); }
 .context-menu button:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
 /* the one action that cannot be undone, below its own line */
 .context-menu button.danger { color: #e39a9a; }
