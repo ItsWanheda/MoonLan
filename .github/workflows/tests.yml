@@ -12,6 +12,8 @@ on:
 jobs:
   unittest:
     runs-on: ubuntu-latest
+    # A run that hangs is stopped here, not after GitHub's six hours
+    timeout-minutes: 15
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
@@ -27,5 +29,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # A test that hangs fails the run and says where (v0.7.10): ten
+      # minutes in, `timeout` sends SIGABRT, and Python's faulthandler
+      # prints the stack of every thread before the process dies. The
+      # whole suite takes a minute or two. v0.7.9's run hung for 19
+      # minutes and was cancelled with nothing in the log to say why.
       - name: Run tests
-        run: python -m unittest discover -s tests -v
+        run: timeout --signal=ABRT 10m python -X faulthandler -m unittest discover -s tests -v
