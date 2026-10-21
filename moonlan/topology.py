@@ -51,6 +51,7 @@ rather than silently resolved.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections import Counter
@@ -632,6 +633,37 @@ def short_model(sys_descr: str) -> str:
     if len(head) > MODEL_MAX_CHARS:
         head = head[:MODEL_MAX_CHARS - 1].rstrip() + "…"
     return head
+
+
+# a port name split into its beginning and the number it ends with
+PORT_NUMBER = re.compile(r"^(.*?)(\d+)$")
+
+
+def port_prefix(sw: SwitchData) -> str | None:
+    """The beginning every physical port of this switch has before its
+    number — "GigabitEthernet1/0/" of "GigabitEthernet1/0/3", "ether"
+    of "ether1", "1/" of "1/3" — or None (v0.7.10).
+
+    The map's "numbers only" shows the bare number of a port only on a
+    switch where that number names one port. None when there are no
+    physical ports, when a name does not end in a number, and when the
+    beginnings differ: a stack's "1/5" and "2/5" would both be "5", and
+    a MikroTik's "ether1" and "sfp-sfpplus1" both "1". Aggregates, VLAN
+    interfaces and synthetic bridge-ports are not physical and do not
+    count — the same ports as `ports_total`.
+    """
+    prefix = None
+    for if_index, port in sw.ports.items():
+        if if_index <= 0 or not port.is_physical:
+            continue
+        match = PORT_NUMBER.match(port.name or "")
+        if match is None:
+            return None
+        if prefix is None:
+            prefix = match.group(1)
+        elif match.group(1) != prefix:
+            return None
+    return prefix
 
 
 def device_kind(capabilities: set[str], cap_known: bool) -> str:
@@ -2301,6 +2333,8 @@ def build_topology(
         "ports_up": sum(
             1 for p in sw.ports.values() if p.is_physical and p.oper_up
         ),
+        # what all of them have before their number, for "numbers only"
+        "port_prefix": port_prefix(sw),
     } for sw in switches]
 
     # VLAN names from all switches (first switch wins on ID conflicts)

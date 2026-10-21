@@ -135,7 +135,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_ports_recorded_per_end(self):
         build = function("buildGraphData")
-        self.assertIn("edge.portAt = { ...edge.portAt, [end]: portShort(port, members) };", build)
+        self.assertIn("edge.portAt = { ...edge.portAt, [end]: { port, members: members || null, prefix } };", build)
         # an end that is not the switch itself gets no tag
         self.assertIn("if (edge.from !== end && edge.to !== end) return edge;", build)
         self.assertIn("isLacp && link.lag.a_members", build)

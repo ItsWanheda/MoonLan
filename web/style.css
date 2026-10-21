@@ -840,13 +840,13 @@ body.gated .toolbar > button { display: none; }
 }
 
 .context-menu button:hover { background: var(--bg-hover); }
-/* one of several modes: the current one ticked */
-.context-menu button.radio::before {
+/* one of several modes, or a switch of its own: ticked when chosen */
+.context-menu button.tick::before {
   content: "";
   display: inline-block;
   width: 1.3em;
 }
-.context-menu button.radio[aria-checked="true"]::before { content: "✓"; color: var(--ok); }
+.context-menu button.tick[aria-checked="true"]::before { content: "✓"; color: var(--ok); }
 .context-menu button:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
 /* the one action that cannot be undone, below its own line */
 .context-menu button.danger { color: #e39a9a; }

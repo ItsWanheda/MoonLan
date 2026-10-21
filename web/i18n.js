@@ -14,6 +14,7 @@ const I18N = {
     portLabels_off: "Off",
     portLabels_selected: "For the selection",
     portLabels_all: "Everywhere",
+    portLabelsNumbers: "Numbers only",
     layoutPinnedMark: "pinned: {n}",
     layoutPinnedHint:
       "Pinned nodes stay where they are for everyone, and only they are "
@@ -776,6 +777,7 @@ const I18N = {
     portLabels_off: "Выключено",
     portLabels_selected: "Для выделенного",
     portLabels_all: "Везде",
+    portLabelsNumbers: "Только номера",
     layoutPinnedMark: "закреплено: {n}",
     layoutPinnedHint:
       "Закреплённые узлы стоят на своих местах для всех, и сохраняются "

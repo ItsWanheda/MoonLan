@@ -307,6 +307,10 @@ cables between the same two switches without a LAG are two links: the
 one carrying traffic, and beside it the other with `parallel: true` and
 its own ports and STP state (`stp_blocking`).
 
+A switch's `port_prefix` is what all its physical ports have before
+their number ("GigabitEthernet1/0/" for "GigabitEthernet1/0/3"), or
+`null` when they have no common beginning or a name ends in no number.
+
 Hosts, switches, and bridges whose chassis id is a MAC carry who made
 them, from the IEEE register: `vendor` — the name exactly as the
 register has it, or `null` — and `vendor_status`, which says why it is

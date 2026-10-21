@@ -2338,10 +2338,11 @@ function menuButtons(items, groups, pick) {
       button.dataset.key = item.key;
       button.textContent = item.label;
       if (item.checked !== undefined) {
-        // one of several modes, the current one ticked
-        button.setAttribute("role", "menuitemradio");
+        // one of several modes, the current one ticked — or a switch
+        // of its own, ticked when on
+        button.setAttribute("role", item.checkbox ? "menuitemcheckbox" : "menuitemradio");
         button.setAttribute("aria-checked", item.checked ? "true" : "false");
-        button.classList.add("radio");
+        button.classList.add("tick");
       }
       if (item.danger) button.classList.add("danger");
       if (item.disabled) {
@@ -3291,11 +3292,15 @@ function buildGraphData() {
      that is the switch itself: the line of a device behind a group or
      a bridge starts there, and the port is on the line into the switch
      already. */
+  const prefixOf = new Map(
+    topology.switches.map((sw) => [sw.ip, sw.port_prefix || null])
+  );
   const markPort = (edge, ip, port, members) => {
     if (!ip) return edge;
     const end = "sw:" + ip;
     if (edge.from !== end && edge.to !== end) return edge;
-    edge.portAt = { ...edge.portAt, [end]: portShort(port, members) };
+    const prefix = prefixOf.get(ip) || null;
+    edge.portAt = { ...edge.portAt, [end]: { port, members: members || null, prefix } };
     return edge;
   };
   // a line out of a switch's port: the loop mark and the port's tag
@@ -3731,7 +3736,10 @@ const PORT_LABEL_MODES = ["off", "selected", "all"];
 let portLabelMode = PORT_LABEL_MODES.includes(localStorage.getItem(PORT_LABELS_KEY))
   ? localStorage.getItem(PORT_LABELS_KEY)
   : "selected";
-// edge id -> {id, from, to, ends: {node id: tag text}, alarm}
+// "numbers only": the bare number of a port where it names one port
+const PORT_NUMBERS_KEY = "moonlan-port-labels-numbers";
+let portNumbersOnly = localStorage.getItem(PORT_NUMBERS_KEY) === "1";
+// edge id -> {id, from, to, ends: {node id: {port, members, prefix}}, alarm}
 let portEdges = new Map();
 // changes with every rebuild of portEdges: a cached placement of the
 // tags is for one version of the map
@@ -3774,6 +3782,31 @@ function portShort(port, members) {
   if (name.length <= 8) return name;
   const tail = name.match(/(\d+(?:[/.:]\d+)*)(?!.*\d)/);
   return tail ? tail[1] : name.slice(0, 7) + "…";
+}
+
+/* The text of a tag (v0.7.10): portShort(), or with "numbers only" on
+   a switch whose physical ports all share one beginning (`prefix`,
+   from the server), the number after it — "Slot0/25" → "25", an
+   aggregate's members the same way, "23,24". A name without that
+   beginning — an aggregate's own, a LAG trunk's bridge-port — is as
+   portShort() has it; so is every port of a switch with no prefix. */
+function portTagText(port, members, prefix, numbersOnly) {
+  const number = (name) => {
+    const text = name == null ? "" : String(name).trim();
+    if (!numbersOnly || !prefix || !text.startsWith(prefix)) return null;
+    const rest = text.slice(prefix.length);
+    return /^\d+$/.test(rest) ? rest : null;
+  };
+  if (members && members.length) {
+    const numbers = members.map(number);
+    if (numbers.every((n) => n !== null)) {
+      return numbers.length <= 2
+        ? numbers.join(",")
+        : numbers[0] + "+" + (numbers.length - 1);
+    }
+    return portShort(port, members);
+  }
+  return number(port) ?? portShort(port, members);
 }
 
 /* Which tags to draw, as [edge entry, node id] pairs. A selected switch
@@ -4076,7 +4109,7 @@ function portTagsInPlace(ctx) {
     }
   }
   const key = [
-    portLabelMode, scale, portDataVersion, moved, drawn.length, view,
+    portLabelMode, portNumbersOnly, scale, portDataVersion, moved, drawn.length, view,
     network.getSelectedNodes().join(), network.getSelectedEdges().join(),
   ].join("|");
   if (key === portTagPlacement.key) return portTagPlacement.tags;
@@ -4102,7 +4135,8 @@ function portTagsInPlace(ctx) {
     };
     const own = box(end);
     if (!own) continue;
-    const text = entry.ends[end];
+    const at = entry.ends[end];
+    const text = portTagText(at.port, at.members, at.prefix, portNumbersOnly);
     const link = entry.id.startsWith("link:");
     const chosen = !selected || selected.has(entry.id + "\u0000" + end);
     tags.push({
@@ -4183,18 +4217,31 @@ function setPortLabelMode(mode) {
 }
 
 function portLabelItems() {
-  return PORT_LABEL_MODES.map((mode) => ({
-    key: mode, group: "mode", label: t("portLabels_" + mode),
-    checked: mode === portLabelMode,
-  }));
+  return [
+    ...PORT_LABEL_MODES.map((mode) => ({
+      key: mode, group: "mode", label: t("portLabels_" + mode),
+      checked: mode === portLabelMode,
+    })),
+    // below a line, and kept with the tags off too: it changes nothing
+    // then, and is there when they come back
+    { key: "numbers", group: "text", label: t("portLabelsNumbers"),
+      checkbox: true, checked: portNumbersOnly },
+  ];
+}
+
+function setPortNumbersOnly(on) {
+  portNumbersOnly = on;
+  localStorage.setItem(PORT_NUMBERS_KEY, on ? "1" : "0");
+  if (network) network.redraw();
 }
 
 function openPortLabelsMenu() {
   closeNodeMenu();
   closeMoreMenu(false);
-  els.portLabelsMenu.replaceChildren(...menuButtons(portLabelItems(), ["mode"], (item) => {
+  els.portLabelsMenu.replaceChildren(...menuButtons(portLabelItems(), ["mode", "text"], (item) => {
     closePortLabelsMenu(true);
-    setPortLabelMode(item.key);
+    if (item.key === "numbers") setPortNumbersOnly(!portNumbersOnly);
+    else setPortLabelMode(item.key);
   }));
   els.portLabelsMenu.classList.remove("hidden");
   els.portLabelsBtn.setAttribute("aria-expanded", "true");
