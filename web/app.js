@@ -3574,6 +3574,7 @@ function buildGraphData() {
   }
 
   curveParallelEdges(edges);
+  portDataVersion++;
   portEdges = new Map(
     edges.filter((edge) => edge.portAt).map((edge) => [edge.id, {
       id: edge.id, from: edge.from, to: edge.to, ends: edge.portAt,
@@ -3732,13 +3733,15 @@ let portLabelMode = PORT_LABEL_MODES.includes(localStorage.getItem(PORT_LABELS_K
   : "selected";
 // edge id -> {id, from, to, ends: {node id: tag text}, alarm}
 let portEdges = new Map();
+// changes with every rebuild of portEdges: a cached placement of the
+// tags is for one version of the map
+let portDataVersion = 0;
 // "Everywhere" stops below this zoom: the whole network in tags is a
 // green rash, not information
 const PORT_LABELS_MIN_SCALE = 0.5;
 const PORT_TAG_FONT = 11; // px on the screen
 const PORT_TAG_PAD_X = 4;
 const PORT_TAG_HEIGHT = 15;
-const PORT_TAG_GAP = 6; // between the node's box and the tag, on the screen
 
 /* A port's name as it fits on a tag. A number or a short name as it
    is; a long one by the number it ends with ("GigabitEthernet1/0/3" →
@@ -3780,8 +3783,12 @@ function portShort(port, members) {
    gets both ends, but only while no node is selected: vis selects
    every line of a selected node along with it. */
 function portTagsToDraw() {
+  return portTagsFor(portLabelMode);
+}
+
+function portTagsFor(mode) {
   const tags = [];
-  if (portLabelMode === "all") {
+  if (mode === "all") {
     for (const entry of portEdges.values()) {
       for (const end of Object.keys(entry.ends)) tags.push([entry, end]);
     }
@@ -3836,39 +3843,285 @@ function edgePointFn(entry, start, positions) {
   return (t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
 }
 
-/* The centre of a tag w × h at the `end` of a line: the first point of
-   the line outside the node's box grown by the gap and by half the tag,
-   so the tag sits just past the node. Never past its half of the line:
-   on a short one the two tags may come up to the speed in the middle,
-   but not onto each other. */
-function portTagCenter(entry, end, positions, w, h, scale) {
-  const point = edgePointFn(entry, end, positions);
-  if (!point) return null;
-  const box = network.getBoundingBox(end);
-  if (!box) return null;
-  const gap = PORT_TAG_GAP / scale;
-  const left = box.left - gap - w / 2;
-  const right = box.right + gap + w / 2;
-  const top = box.top - gap - h / 2;
-  const bottom = box.bottom + gap + h / 2;
-  const inside = (p) => p.x > left && p.x < right && p.y > top && p.y < bottom;
-  const a = point(0);
-  const b = point(1);
-  const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-  // how far the tag reaches along the line from its centre
-  const reach = (w / 2) * Math.abs(b.x - a.x) / length +
-    (h / 2) * Math.abs(b.y - a.y) / length + 1 / scale;
-  const most = Math.max(0, 0.5 - reach / length);
-  if (inside(point(most))) return point(most);
-  // the line leaves the box once: bisect for where
-  let lo = 0;
-  let hi = most;
-  for (let i = 0; i < 12; i++) {
-    const mid = (lo + hi) / 2;
-    if (inside(point(mid))) lo = mid;
-    else hi = mid;
+/* Where the tags go, in screen pixels: [{w, h, line, own, far, shared,
+   rank, node}] -> [{x, y} | null], in the order given. Pure, so it can
+   be run on made-up lines (tests/test_port_tags.py).
+
+   `line` is the line as drawn, a polyline from the tag's own node to
+   the far one; `own` and `far` are the two nodes' boxes. A tag never
+   touches its own node's box: it starts just past it, GAP pixels clear,
+   and walks along its own line, STEP at a time, until it is clear of
+   every tag placed before it by MARGIN. It goes no further than the
+   middle of the free part of the line when the line has a tag at its
+   other end too (`shared`: switch to switch, the speed is there), and
+   up to the far node's box when it has not. Two nodes that leave no
+   free line between them get the tag just past the own box, wherever
+   that is. The tags of the selection go first (`rank`), then those of
+   links between switches, then the rest — each node's by the angle its
+   lines leave at, so a fan of lines becomes a staircase. A tag with no
+   room is left out when every line is tagged ("all") and put at its
+   limit anyway for the selection: those are the ports asked for.
+
+   The tags already placed are kept in a grid of cells one tag high, so
+   a try looks at its neighbours, not at every tag on the map. */
+function placePortTags(tags, mode) {
+  const GAP = 6;
+  const STEP = 3;
+  const MARGIN = 2;
+  const placed = tags.map(() => null);
+  if (!tags.length) return placed;
+  const cell = Math.max(...tags.map((tag) => tag.h)) || 15;
+  const grid = new Map();
+  const cellsOf = (r) => {
+    const keys = [];
+    const i1 = Math.floor((r.x2 + MARGIN) / cell);
+    const j1 = Math.floor((r.y2 + MARGIN) / cell);
+    for (let i = Math.floor((r.x1 - MARGIN) / cell); i <= i1; i++) {
+      for (let j = Math.floor((r.y1 - MARGIN) / cell); j <= j1; j++) {
+        keys.push(i * 65536 + j);
+      }
+    }
+    return keys;
+  };
+  const hits = (r) => {
+    for (const key of cellsOf(r)) {
+      for (const o of grid.get(key) || []) {
+        if (r.x1 < o.x2 + MARGIN && o.x1 < r.x2 + MARGIN &&
+            r.y1 < o.y2 + MARGIN && o.y1 < r.y2 + MARGIN) return true;
+      }
+    }
+    return false;
+  };
+  const add = (r) => {
+    for (const key of cellsOf(r)) {
+      if (!grid.has(key)) grid.set(key, []);
+      grid.get(key).push(r);
+    }
+  };
+  const inBox = (box, gx, gy) => (p) =>
+    p.x > box.left - gx && p.x < box.right + gx &&
+    p.y > box.top - gy && p.y < box.bottom + gy;
+  // a polyline walked by the distance along it
+  const route = (points) => {
+    const at = [0];
+    for (let i = 1; i < points.length; i++) {
+      at.push(at[i - 1] + Math.hypot(points[i].x - points[i - 1].x,
+                                     points[i].y - points[i - 1].y));
+    }
+    const length = at[at.length - 1];
+    const segment = (s) => {
+      let i = 1;
+      while (i < at.length - 1 && at[i] < s) i++;
+      return i;
+    };
+    return {
+      length,
+      point(s) {
+        if (s <= 0 || !length) return points[0];
+        if (s >= length) return points[points.length - 1];
+        const i = segment(s);
+        const k = (s - at[i - 1]) / ((at[i] - at[i - 1]) || 1);
+        return {
+          x: points[i - 1].x + (points[i].x - points[i - 1].x) * k,
+          y: points[i - 1].y + (points[i].y - points[i - 1].y) * k,
+        };
+      },
+      direction(s) {
+        const i = segment(Math.min(Math.max(s, 0), length));
+        const dx = points[i].x - points[i - 1].x;
+        const dy = points[i].y - points[i - 1].y;
+        const d = Math.hypot(dx, dy) || 1;
+        return { x: dx / d, y: dy / d };
+      },
+    };
+  };
+  // where the line leaves a region it starts in, or null if it never does
+  const leaves = (way, inside) => {
+    if (inside(way.point(way.length))) return null;
+    if (!inside(way.point(0))) return 0;
+    let lo = 0;
+    let hi = way.length;
+    for (let k = 0; k < 24; k++) {
+      const mid = (lo + hi) / 2;
+      if (inside(way.point(mid))) lo = mid;
+      else hi = mid;
+    }
+    return hi;
+  };
+  // the last point before the line enters a region it ends in
+  const enters = (way, inside) => {
+    if (inside(way.point(0))) return null;
+    if (!inside(way.point(way.length))) return way.length;
+    let lo = 0;
+    let hi = way.length;
+    for (let k = 0; k < 24; k++) {
+      const mid = (lo + hi) / 2;
+      if (inside(way.point(mid))) hi = mid;
+      else lo = mid;
+    }
+    return lo;
+  };
+  // just past the grown box, straight from its middle towards `to`
+  const pastBox = (box, from, to, gx, gy) => {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    if (!dx && !dy) dy = -1;
+    const reach = (low, high, origin, d) =>
+      d > 0 ? (high - origin) / d : d < 0 ? (low - origin) / d : Infinity;
+    const t = Math.min(
+      reach(box.left - gx, box.right + gx, from.x, dx),
+      reach(box.top - gy, box.bottom + gy, from.y, dy),
+    ) * 1.0001;
+    return { x: from.x + dx * t, y: from.y + dy * t };
+  };
+
+  const order = tags.map((tag, index) => {
+    const hw = tag.w / 2;
+    const hh = tag.h / 2;
+    const way = route(tag.line);
+    const onOwn = inBox(tag.own, GAP + hw, GAP + hh);
+    const start = leaves(way, onOwn);
+    const first = start === null
+      ? pastBox(tag.own, tag.line[0], tag.line[tag.line.length - 1], GAP + hw, GAP + hh)
+      : way.point(start);
+    let limit = start;
+    if (start !== null) {
+      if (tag.shared) {
+        const from = leaves(way, inBox(tag.own, 0, 0)) ?? way.length;
+        const to = tag.far ? enters(way, inBox(tag.far, 0, 0)) ?? 0 : way.length;
+        const middle = (from + to) / 2;
+        const u = way.direction(middle);
+        limit = middle - (hw * Math.abs(u.x) + hh * Math.abs(u.y));
+      } else if (tag.far) {
+        limit = enters(way, inBox(tag.far, GAP + hw, GAP + hh)) ?? start;
+      } else {
+        limit = way.length;
+      }
+    }
+    const angle = Math.atan2(first.y - tag.line[0].y, first.x - tag.line[0].x);
+    return { index, tag, hw, hh, way, onOwn, start, first, limit, angle };
+  });
+  order.sort((a, b) =>
+    a.tag.rank - b.tag.rank ||
+    (a.tag.node < b.tag.node ? -1 : a.tag.node > b.tag.node ? 1 : 0) ||
+    a.angle - b.angle);
+
+  for (const o of order) {
+    const box = (c) => ({ x1: c.x - o.hw, x2: c.x + o.hw, y1: c.y - o.hh, y2: c.y + o.hh, c });
+    let chosen = null;
+    let fallback = box(o.first);
+    if (o.start === null) {
+      if (!hits(fallback)) chosen = fallback;
+    } else {
+      // no free line at all: the first point only
+      const last = Math.max(o.start, o.limit);
+      fallback = box(o.way.point(last));
+      for (let s = o.start, tries = 0; s <= last + 1e-6 && tries < 400; s += STEP, tries++) {
+        const c = o.way.point(s);
+        if (o.onOwn(c)) continue;
+        const r = box(c);
+        if (!hits(r)) {
+          chosen = r;
+          break;
+        }
+      }
+    }
+    if (!chosen && mode === "selected") chosen = fallback;
+    if (!chosen) continue;
+    add(chosen);
+    placed[o.index] = chosen.c;
   }
-  return point(hi);
+  return placed;
+}
+
+// how many points of a curved line the placement walks along
+const PORT_TAG_SAMPLES = 16;
+// how far past the edge of the screen "everywhere" still places tags,
+// in screen pixels: a tag stands well within that of its node
+const PORT_TAG_VIEW_MARGIN = 300;
+// the last placement and what it was made for
+let portTagPlacement = { key: null, tags: [] };
+
+/* The tags of this frame where they go: placed again only when the map
+   moved, the zoom, the selection, the mode or the data changed. A
+   frame drawn for a hover or a redraw draws what is there. */
+function portTagsInPlace(ctx) {
+  let drawn = portTagsToDraw();
+  if (!drawn.length) return [];
+  const scale = network.getScale();
+  const positions = network.getPositions();
+  // "everywhere" places what is on the screen and around it: most of a
+  // big map is off it, and placing its tags would be work for nothing
+  let view = "";
+  if (portLabelMode === "all") {
+    const margin = PORT_TAG_VIEW_MARGIN;
+    const a = network.DOMtoCanvas({ x: -margin, y: -margin });
+    const b = network.DOMtoCanvas({
+      x: els.network.clientWidth + margin, y: els.network.clientHeight + margin,
+    });
+    drawn = drawn.filter(([, end]) => {
+      const p = positions[end];
+      return p && p.x >= a.x && p.x <= b.x && p.y >= a.y && p.y <= b.y;
+    });
+    view = [a.x, a.y, b.x, b.y].map((v) => Math.round(v * scale)).join(",");
+  }
+  // where the nodes of these lines are, to a quarter of a pixel
+  let moved = 0;
+  for (const [entry] of drawn) {
+    for (const id of [entry.from, entry.to]) {
+      const p = positions[id];
+      if (!p) continue;
+      moved = (moved * 31 + Math.round(p.x * scale * 4)) | 0;
+      moved = (moved * 31 + Math.round(p.y * scale * 4)) | 0;
+    }
+  }
+  const key = [
+    portLabelMode, scale, portDataVersion, moved, drawn.length, view,
+    network.getSelectedNodes().join(), network.getSelectedEdges().join(),
+  ].join("|");
+  if (key === portTagPlacement.key) return portTagPlacement.tags;
+  const selected = portLabelMode === "all"
+    ? new Set(portTagsFor("selected").map(([entry, end]) => entry.id + "\u0000" + end))
+    : null;
+  const tags = [];
+  for (const [entry, end] of drawn) {
+    const point = edgePointFn(entry, end, positions);
+    if (!point) continue;
+    const other = end === entry.from ? entry.to : entry.from;
+    const line = [];
+    for (let i = 0; i <= PORT_TAG_SAMPLES; i++) {
+      const p = point(i / PORT_TAG_SAMPLES);
+      line.push({ x: p.x * scale, y: p.y * scale });
+    }
+    const box = (id) => {
+      const b = network.getBoundingBox(id);
+      return b && {
+        left: b.left * scale, right: b.right * scale,
+        top: b.top * scale, bottom: b.bottom * scale,
+      };
+    };
+    const own = box(end);
+    if (!own) continue;
+    const text = entry.ends[end];
+    const link = entry.id.startsWith("link:");
+    const chosen = !selected || selected.has(entry.id + "\u0000" + end);
+    tags.push({
+      text, alarm: entry.alarm,
+      w: portTagWidth(ctx, text) + PORT_TAG_PAD_X * 2,
+      h: PORT_TAG_HEIGHT,
+      line, own, far: box(other),
+      shared: Object.keys(entry.ends).length > 1,
+      rank: (chosen ? 0 : 2) + (link ? 0 : 1),
+      node: end,
+    });
+  }
+  const at = placePortTags(tags, portLabelMode);
+  const result = [];
+  tags.forEach((tag, i) => {
+    if (at[i]) result.push({ ...tag, x: at[i].x / scale, y: at[i].y / scale });
+  });
+  portTagPlacement = { key, tags: result };
+  return result;
 }
 
 // tag text -> its width at PORT_TAG_FONT px, measured once
@@ -3895,24 +4148,20 @@ function drawPortTags(ctx) {
   if (portLabelMode === "off" || !portEdges.size) return;
   const scale = network.getScale();
   if (portLabelMode === "all" && scale < PORT_LABELS_MIN_SCALE) return;
-  const tags = portTagsToDraw();
+  const tags = portTagsInPlace(ctx);
   if (!tags.length) return;
-  const positions = network.getPositions();
-  const h = PORT_TAG_HEIGHT / scale;
   ctx.save();
   ctx.font = portTagFont(PORT_TAG_FONT / scale);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  for (const [entry, end] of tags) {
-    const text = entry.ends[end];
-    const w = (portTagWidth(ctx, text) + PORT_TAG_PAD_X * 2) / scale;
-    const at = portTagCenter(entry, end, positions, w, h, scale);
-    if (!at) continue;
-    ctx.fillStyle = entry.alarm ? colors.alarm : colors.ok;
-    roundedRect(ctx, at.x - w / 2, at.y - h / 2, w, h, 3 / scale);
+  for (const tag of tags) {
+    const w = tag.w / scale;
+    const h = tag.h / scale;
+    ctx.fillStyle = tag.alarm ? colors.alarm : colors.ok;
+    roundedRect(ctx, tag.x - w / 2, tag.y - h / 2, w, h, 3 / scale);
     ctx.fill();
     ctx.fillStyle = colors.panel;
-    ctx.fillText(text, at.x, at.y + 0.5 / scale);
+    ctx.fillText(tag.text, tag.x, tag.y + 0.5 / scale);
   }
   ctx.restore();
 }

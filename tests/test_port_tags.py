@@ -106,7 +106,7 @@ class ModesTest(unittest.TestCase):
 
 class SelectionTest(unittest.TestCase):
     def test_which_ends(self):
-        tags = function("portTagsToDraw")
+        tags = function("portTagsFor")
         # nodes first: vis selects a node's lines along with it
         self.assertLess(tags.index("getSelectedNodes()"), tags.index("getSelectedEdges()"))
         # a switch: its own end only; anything else: the switch end
@@ -120,15 +120,18 @@ class SelectionTest(unittest.TestCase):
 
     def test_drawing(self):
         draw = function("drawPortTags")
-        # 11 px on the screen at any zoom, one getPositions() a frame
+        # 11 px on the screen at any zoom
         self.assertIn("PORT_TAG_FONT / scale", draw)
-        self.assertEqual(draw.count("getPositions("), 1)
-        self.assertIn("entry.alarm ? colors.alarm : colors.ok", draw)
+        self.assertIn("tag.alarm ? colors.alarm : colors.ok", draw)
         self.assertIn('portLabelMode === "all" && scale < PORT_LABELS_MIN_SCALE', draw)
         self.assertIn("const PORT_LABELS_MIN_SCALE = 0.5;", APP)
-        # the curve of a parallel link comes from vis, behind one function
+        # one getPositions() a frame, and placed again only on a change
+        in_place = function("portTagsInPlace")
+        self.assertEqual(in_place.count("getPositions("), 1)
+        self.assertIn("if (key === portTagPlacement.key) return portTagPlacement.tags;", in_place)
+        self.assertIn("getBoundingBox(id)", in_place)
+        # the curve of a line comes from vis, behind one function
         self.assertIn("edge.edgeType.getPoint", function("edgePointFn"))
-        self.assertIn("getBoundingBox(end)", function("portTagCenter"))
 
     def test_ports_recorded_per_end(self):
         build = function("buildGraphData")
