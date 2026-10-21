@@ -38,7 +38,7 @@ disabled or demoted.
 | Search, copying IP/MAC, links (web, SSH, RDP, your own) | ✓ | ✓ | ✓ |
 | Ping and traceroute from the server | — | ✓ | ✓ |
 | Rescan network | — | ✓ | ✓ |
-| Pin, release, arrange mode, "Remember the places around it" | — | ✓ | ✓ |
+| Pin, unpin, arrange mode, "Remember the places around it" | — | ✓ | ✓ |
 | Clear an alarm, mark a host monitored | — | ✓ | ✓ |
 | Reset layout | — | — | ✓ |
 | Users and roles | — | — | ✓ |

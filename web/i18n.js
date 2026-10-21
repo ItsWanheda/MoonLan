@@ -8,16 +8,15 @@ const I18N = {
     tagline: "local network map",
     journalBtn: "Journal",
     freezeBtn: "Freeze layout",
-    layoutPinnedMark: "placed by hand: {n}",
+    layoutPinnedMark: "pinned: {n}",
     layoutPinnedHint:
-      "That many nodes are where somebody put them, out of reach of the "
-      + "layout engine, and only they are kept. Everything else is laid "
-      + "out again on every load, starting next to the nodes placed by "
-      + "hand; the groups and switches round a placed node start where "
-      + "they stood when it was placed. Turn on Arrange to place a node, "
-      + "or press P with it selected; the same releases it again.",
-    menuPin: "Place here",
-    menuUnpin: "Release",
+      "Pinned nodes stay where they are for everyone, and only they are "
+      + "kept. Everything else is laid out again on every load, starting "
+      + "next to the pinned ones; the groups and switches round a pinned "
+      + "node start where they stood when it was pinned. To pin or unpin "
+      + "a node, use Arrange or press P with it selected.",
+    menuPin: "Pin",
+    menuUnpin: "Unpin",
     menuRememberNeighbours: "Remember the places around it",
     reasonNoNeighbours: "no groups or switches around it",
     neighboursRemembered: "Places around it remembered: {n}",
@@ -83,23 +82,21 @@ const I18N = {
     arrangeBtn: "Arrange",
     arrangeOnBtn: "Arranging",
     arrangeHint:
-      "In arrange mode dragging a node places it and keeps it there, "
-      + "and the right button lets it go again. Outside it a dragged "
-      + "node goes back to the layout engine \u2014 except one already "
-      + "placed by hand, which keeps its pin at the new spot.",
+      "In arrange mode dragging a node pins it at the new spot, and the "
+      + "right button unpins it. Outside it a dragged node goes back to "
+      + "the physics \u2014 except a pinned one: it stays pinned at the "
+      + "new spot.",
     resetLayoutBtn: "Reset layout",
     pinnedMark: "\ud83d\udccc",
     pinnedHint:
-      "This node is where somebody put it, not where the layout "
-      + "engine would have put it. It is out of the physics and stays "
-      + "here for everyone looking at this map, through reloads and "
-      + "restarts.",
-    unpinBtn: "Release this node",
-    unpinConfirm: "Release \u201c{node}\u201d back to the layout engine?",
+      "A user pinned this node by hand. The physics does not move it, "
+      + "and its position is kept on the map's server.",
+    unpinBtn: "Unpin this node",
+    unpinConfirm: "Unpin \u201c{node}\u201d and give it back to the layout engine?",
     resetLayoutConfirm:
       "Forget every saved position, for everyone? The map will lay "
-      + "itself out from scratch, and nodes placed by hand will lose "
-      + "their places. This cannot be undone.",
+      + "itself out from scratch, and pinned nodes will lose their "
+      + "places. This cannot be undone.",
     unfreezeBtn: "Unfreeze",
     rescanBtn: "Rescan network",
     searchPlaceholder: "Search: name, IP, MAC or manufacturer…",
@@ -117,7 +114,7 @@ const I18N = {
     scanningShortStart: "scanning…",
     scanFailedShort: "failed {time}",
     serviceOfflineShort: "offline",
-    arrangePinned: "Placed by hand: {n}.",
+    arrangePinned: "Pinned: {n}.",
     scanPrefix: "Last scan: ",
     scanFailed: "Last scan failed: ",
     noData: "No data yet",
@@ -519,8 +516,8 @@ const I18N = {
     ev_link_dropped: "Link withdrawn",
     ev_layout_saved: "Layout saved",
     ev_layout_cleared: "Layout reset",
-    ev_layout_pinned: "Placed by hand",
-    ev_layout_released: "Released",
+    ev_layout_pinned: "Pinned",
+    ev_layout_released: "Unpinned",
     evNodes: "{n}: {names}",
     evNodesMore: "{n}: {names} and {more} more",
     al_tls_cert_expiring: "Certificate ending",
@@ -745,17 +742,16 @@ const I18N = {
     tagline: "карта локальной сети",
     journalBtn: "Журнал",
     freezeBtn: "Заморозить раскладку",
-    layoutPinnedMark: "поставлено руками: {n}",
+    layoutPinnedMark: "закреплено: {n}",
     layoutPinnedHint:
-      "Столько узлов стоят там, куда их поставил человек, и движку "
-      + "раскладки недоступны; запоминаются только они. Всё остальное "
-      + "при каждой загрузке раскладывается заново, начиная рядом с "
-      + "поставленными руками; группы и коммутаторы вокруг поставленного "
-      + "узла стартуют там, где стояли, когда его ставили. Чтобы "
-      + "поставить узел, включите «Расстановку» или нажмите P на "
-      + "выделенном; тем же способом он и отпускается.",
-    menuPin: "Поставить здесь",
-    menuUnpin: "Отпустить",
+      "Закреплённые узлы стоят на своих местах для всех, и сохраняются "
+      + "только они. Остальное раскладывается заново при каждой загрузке, "
+      + "начиная рядом с закреплёнными; группы и коммутаторы вокруг "
+      + "закреплённого узла начинают оттуда, где стояли, когда его "
+      + "закрепили. Закрепить или открепить узел — «Расстановка» или "
+      + "клавиша P на выделенном.",
+    menuPin: "Закрепить",
+    menuUnpin: "Открепить",
     menuRememberNeighbours: "Запомнить расположение соседей",
     reasonNoNeighbours: "рядом нет групп и коммутаторов",
     neighboursRemembered: "Расположение соседей запомнено: {n}",
@@ -821,22 +817,20 @@ const I18N = {
     arrangeBtn: "Расстановка",
     arrangeOnBtn: "Расставляю",
     arrangeHint:
-      "В режиме расстановки перетаскивание ставит узел и оставляет его "
-      + "там, а правая кнопка отпускает обратно. Вне режима "
-      + "перетащенный узел возвращается под физику \u2014 кроме уже "
-      + "поставленного руками: тот остаётся закреплённым на новом месте.",
+      "В режиме расстановки перетаскивание закрепляет узел на новом "
+      + "месте, правая кнопка открепляет. Вне режима перетащенный узел "
+      + "возвращается под физику \u2014 кроме закреплённого: он остаётся "
+      + "закреплённым на новом месте.",
     resetLayoutBtn: "Сбросить раскладку",
     pinnedMark: "\ud83d\udccc",
     pinnedHint:
-      "Этот узел стоит там, куда его поставил человек, а не там, куда "
-      + "его положил бы алгоритм раскладки. Он выведен из-под физики и "
-      + "остаётся здесь для всех, кто смотрит на эту карту, — и после "
-      + "перезагрузки страницы, и после перезапуска сервиса.",
+      "Этот узел закреплён вручную пользователем. Он не подвергается "
+      + "физике, а его расположение сохраняется на сервере карты.",
     unpinBtn: "Открепить узел",
     unpinConfirm: "Открепить «{node}» и вернуть его под раскладку?",
     resetLayoutConfirm:
       "Забыть все сохранённые позиции — для всех? Карта разложится "
-      + "заново, а узлы, поставленные руками, потеряют свои места. "
+      + "заново, а закреплённые узлы потеряют свои места. "
       + "Отменить это будет нельзя.",
     unfreezeBtn: "Разморозить",
     rescanBtn: "Опросить сеть",
@@ -855,7 +849,7 @@ const I18N = {
     scanningShortStart: "опрос…",
     scanFailedShort: "сбой {time}",
     serviceOfflineShort: "нет связи",
-    arrangePinned: "Поставлено руками: {n}.",
+    arrangePinned: "Закреплено: {n}.",
     scanPrefix: "Опрос: ",
     scanFailed: "Последний опрос не удался: ",
     noData: "Данных пока нет",
@@ -1254,8 +1248,8 @@ const I18N = {
     ev_link_dropped: "Связь снята",
     ev_layout_saved: "Раскладка сохранена",
     ev_layout_cleared: "Раскладка сброшена",
-    ev_layout_pinned: "Поставлено руками",
-    ev_layout_released: "Отпущено",
+    ev_layout_pinned: "Закреплено",
+    ev_layout_released: "Откреплено",
     evNodes: "{n}: {names}",
     evNodesMore: "{n}: {names} и ещё {more}",
     al_tls_cert_expiring: "Сертификат кончается",

@@ -372,11 +372,11 @@ with no node on the map.
 ### PUT /api/layout
 
 Stores positions. `only_new` lets older clients avoid overwriting
-positions placed by another browser.
+positions pinned from another browser.
 
 ### PATCH /api/layout
 
-Places or releases nodes in one action (one journal entry);
+Pins or unpins nodes in one action (one journal entry);
 `neighbours` records the offsets round a pinned node.
 
 ### DELETE /api/layout

@@ -2126,8 +2126,8 @@ async def drop_unpinned_positions() -> None:
         if pos["pinned"]
     )
     log.info(
-        "Map layout: %d position(s) placed by hand kept; %d position(s) "
-        "nobody placed removed — they were only where the layout engine "
+        "Map layout: %d pinned position(s) kept; %d position(s) "
+        "nobody pinned removed — they were only where the layout engine "
         "once left a node, and went stale as soon as what it hangs off "
         "moved. Those nodes are laid out from the pinned ones on every "
         "load.", kept, removed,

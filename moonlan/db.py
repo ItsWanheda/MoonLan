@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS layout (
     node_id    TEXT PRIMARY KEY,
     x          REAL NOT NULL,
     y          REAL NOT NULL,
-    pinned     INTEGER DEFAULT 0,          -- 1 = placed by hand, physics off
+    pinned     INTEGER DEFAULT 0,          -- 1 = pinned by hand, physics off
     updated_at REAL NOT NULL,
     -- Set on a row that is not a position but an offset: x and y are
     -- relative to this pinned node, which the node hangs off directly.

@@ -104,7 +104,7 @@ Everything MoonLan does, as of v0.7.5 — the list the README used to carry. The
   hand-set address says so instead of "unknown". The register is
   fetched with `python -m moonlan.oui update`, or copied by hand to a
   machine without the internet.
-- What a person placed is kept, the rest is laid out again. Pinned
+- What a person pinned is kept, the rest is laid out again. Pinned
   positions live on the server, not in one browser: a map of a network
   is a shared object, and two people looking at it have to see the
   same picture. Nothing else is stored as a position — where the
@@ -115,18 +115,18 @@ Everything MoonLan does, as of v0.7.5 — the list the README used to carry. The
   its id, so two pages start from one picture (and with the layout
   frozen show exactly one). The groups and switches round a pinned
   node — not the hosts, which fold round their switch whatever they
-  start from — are remembered as offsets from it when it is placed, and
+  start from — are remembered as offsets from it when it is pinned, and
   start there, on the side a person left them, even after the node has
   been moved. A page that has been open for a week follows what other
-  pages pin, release or reset at its next refresh.
-- Placing a node is a separate act from looking at one. Outside
+  pages pin, unpin or reset at its next refresh.
+- Pinning a node is a separate act from looking at one. Outside
   **Arrange** mode a dragged node goes back to the layout engine; in
-  it, a drag places a node and keeps it there, and the right button
-  lets it go again. `P` does the same from the keyboard. A pinned node
+  it, a drag pins a node at the new spot, and the right button unpins
+  it. `P` does the same from the keyboard. A pinned node
   can be dragged in either mode and keeps its pin at the new spot —
   pinning says "the physics engine does not get to move this", not
   "nobody does" — and the header counts how much of the map is
-  somebody's decision rather than the engine's. Placing and releasing
+  somebody's decision rather than the engine's. Pinning and unpinning
   are entries in the journal, one per action. "Remember the places
   around it" in the menu of a pinned node records how the groups round
   it stand now, without moving the node.

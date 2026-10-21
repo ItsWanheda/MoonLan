@@ -1393,7 +1393,7 @@ def run_layout_view(cfg) -> None:
             if saved_at else " (nothing saved yet)"
         )
     )
-    print(f"placed by hand (pinned): {len(pinned)}")
+    print(f"pinned: {len(pinned)}")
     for node_id in sorted(pinned)[:20]:
         pos = nodes[node_id]
         print(f"  {node_id:<40} {pos['x']:>9.1f} {pos['y']:>9.1f}")
@@ -2340,7 +2340,7 @@ def main() -> None:
     parser.add_argument(
         "--layout", action="store_true",
         help="ask the running service about the saved map layout: how "
-             "many nodes it holds, how many were placed by hand, and "
+             "many nodes it holds, how many are pinned, and "
              "how far it has drifted from the map as it is now",
     )
     parser.add_argument(
