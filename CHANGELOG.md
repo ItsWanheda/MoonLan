@@ -6,17 +6,62 @@ for before the next one started.
 
 Русская версия — [CHANGELOG_RU.md](CHANGELOG_RU.md).
 
+## v0.7.10 — 2026-10-21
+
+The layout of v0.7.8, tags that keep apart, numbers only. Goes out
+instead of v0.7.9, with everything in it.
+
+**The layout of v0.7.8.** v0.7.9's straight lines took vis's support
+nodes out of the physics — one per line, each pushing everything else
+away — and on the production network the branches drew in to the
+centre and the groups of devices shrank into balls. Lines are curves
+on their supports again. The bend v0.7.9 set out to fix is fixed where
+it came from: with the layout frozen, the supports of a dragged node's
+lines move with it, to the same place relative to the line, so a line
+turns and stretches and keeps its curve. On the demo, the mean
+switch–device line and the radius of a group of devices are within
+2 % of v0.7.8; v0.7.9's were 27–29 % shorter.
+
+**Tags that keep apart.** A port tag no longer lies on its own switch —
+beside a wide switch it did — and tags no longer stand on one another.
+Each starts just past its node and walks along its own line until it
+is clear of the tags placed before it, so a fan of lines becomes a
+staircase. A tag on a link between switches stays on its half of the
+free part of the line; on any other line it may go up to the far
+node. Where there is no room, "everywhere" leaves the tag out — the
+number is in the link's card and the ports panel — and the selection
+gets it anyway. Tags are placed again only when something moved, and
+"everywhere" places only those on and around the screen: on the demo
+multiplied to 600 devices, a frame of a drag with every line tagged
+takes about 4 ms.
+
+**Numbers only.** A tick under the three modes of the port numbers'
+menu: on a switch whose physical ports all have one beginning before
+their number, a tag shows the number alone — "Slot0/25" is "25", an
+aggregate "23,24". A stack ("1/5" and "2/5") or a MikroTik with ether
+and sfp ports keeps the names, because there a bare number would name
+two ports. The server sends the beginning as `port_prefix` in
+`/api/topology`.
+
+**CI that does not hang.** The run of v0.7.9 hung for 19 minutes on a
+test client the newest Starlette broke, and the log said nothing.
+The tests' job now stops after 15 minutes, and a test that hangs ten
+minutes in fails the run with the stack of every thread in the log —
+checked once on purpose.
+
 ## v0.7.9 — 2026-10-21
 
-Port numbers on the lines, straight edges, short cards.
+Not released: went into v0.7.10 with fixes.
 
-**Lines do not bend.** The edges had no `smooth` option, so vis-network
-hung each of them on an invisible support node of the physics. With
-the layout frozen the supports stayed where they were, and a node
-dragged away pulled its lines into arcs through its old spot. Lines
-are straight now and follow their nodes — frozen, in Arrange or with
-the physics running — and the physics has one body fewer per edge to
-push around. The map settles as it did.
+Port numbers on the lines, two cables between two switches, short cards.
+
+**Lines that follow their nodes.** The edges had no `smooth` option,
+so vis-network hung each of them on an invisible support node of the
+physics. With the layout frozen the supports stayed where they were,
+and a node dragged away pulled its lines into arcs through its old
+spot. v0.7.9 made the lines straight; that took the supports out of
+the physics, and the map shrank. In v0.7.10 the lines are curved
+again, and a dragged node takes its supports along.
 
 **Two cables between two switches.** With no LAG and spanning tree
 holding one of them in blocking, the map drew one link: whichever

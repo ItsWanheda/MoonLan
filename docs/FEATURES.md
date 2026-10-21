@@ -1,6 +1,6 @@
 # What MoonLan does
 
-Everything MoonLan does, as of v0.7.9 — the list the README used to carry. The README keeps the summary; each item here links to the page that explains it.
+Everything MoonLan does, as of v0.7.10 — the list the README used to carry. The README keeps the summary; each item here links to the page that explains it.
 
 ![Alarms panel](img/alarms.png)
 
@@ -45,8 +45,10 @@ Everything MoonLan does, as of v0.7.9 — the list the README used to carry. The
   neighbour on two ports looks exactly like forwarded LLDP; it counts
   as a second cable only when both ends report each cable port for
   port, nobody else talks on those ports, and one of the cables is
-  blocked. Every other line on the map is straight and follows its
-  nodes, frozen or not.
+  blocked. Every other line is a curve hung on a support node of the
+  physics, and the supports keep branches and groups of devices apart.
+  With the layout frozen, a dragged node takes its lines along, each
+  keeping its bend.
 - Link stability: FDB entries are merged over the last 3 polls, so links
   do not flicker when MAC table entries age out.
 - LACP (IEEE8023-LAG-MIB): an aggregate is drawn as a single thick line
@@ -181,9 +183,17 @@ Everything MoonLan does, as of v0.7.9 — the list the README used to carry. The
   to the number it ends with ("GigabitEthernet1/0/3" → "1/0/3"), a LACP
   aggregate shows the members of its side ("3,4", or "25+3" for more
   than two), a LAG trunk without members "LAG", an unknown port "?".
-  A tag on a red line — a loop, a blocked port — is red; the tags keep
-  their size whatever the zoom, and leave the speed in the middle of
-  the line free.
+  A tag on a red line — a loop, a blocked port — is red, and the tags
+  keep their size whatever the zoom. A tag never lies on its own node:
+  it starts just past it and walks along its line until it is clear of
+  the tags placed before it, so a fan of lines becomes a staircase; on
+  a link between switches it stays on its half of the line, where the
+  speed is. Where there is no room, "everywhere" leaves it out and the
+  selection gets it anyway. **Numbers only**, a tick in the same menu:
+  on a switch whose physical ports all share one beginning before their
+  number ("Slot0/", "ether", "GigabitEthernet1/0/"), the tags show the
+  number alone; a stack or a switch with two kinds of ports keeps the
+  names, where a bare number would name two ports.
 - Short cards: an explanation on a card is one line that says what is
   unusual or unknown — "The loop-detection state of this model is
   unknown", "This node is pinned" — and why, and what to do about it,
