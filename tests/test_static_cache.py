@@ -33,13 +33,28 @@ def _request(path: str, headers=()) -> list[dict]:
     }
     sent: list[dict] = []
 
-    async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+    async def serve():
+        # the request, then the client stays until the response is out
+        # and goes away — what uvicorn does. Starlette 1.9 listens for
+        # that while it sends a file, and a `receive` that only ever
+        # said "request" spun that loop for ever.
+        pending = [{"type": "http.request", "body": b"", "more_body": False}]
+        done = asyncio.Event()
 
-    async def send(message):
-        sent.append(message)
+        async def receive():
+            if pending:
+                return pending.pop(0)
+            await done.wait()
+            return {"type": "http.disconnect"}
 
-    asyncio.run(server.app(scope, receive, send))
+        async def send(message):
+            sent.append(message)
+            if message["type"] == "http.response.body" and not message.get("more_body"):
+                done.set()
+
+        await server.app(scope, receive, send)
+
+    asyncio.run(serve())
     return sent
 
 

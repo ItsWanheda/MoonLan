@@ -36,16 +36,22 @@ async def _call(app, method, path, headers, body, client, host, scheme):
         "server": ("moonlan.test", 8080),
     }
     pending = [{"type": "http.request", "body": body, "more_body": False}]
+    done = asyncio.Event()
 
+    # the client goes away once the response is out, not before: a
+    # disconnect at once cuts a streamed or file response short
     async def receive():
         if pending:
             return pending.pop(0)
+        await done.wait()
         return {"type": "http.disconnect"}
 
     sent = []
 
     async def send(message):
         sent.append(message)
+        if message["type"] == "http.response.body" and not message.get("more_body"):
+            done.set()
 
     await app(scope, receive, send)
     start = next(m for m in sent if m["type"] == "http.response.start")
