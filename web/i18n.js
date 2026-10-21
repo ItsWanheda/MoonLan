@@ -91,6 +91,8 @@ const I18N = {
     pinnedHint:
       "A user pinned this node by hand. The physics does not move it, "
       + "and its position is kept on the map's server.",
+    pinnedHintShort: "This node is pinned",
+    hintMore: "More",
     unpinBtn: "Unpin this node",
     unpinConfirm: "Unpin \u201c{node}\u201d and give it back to the layout engine?",
     resetLayoutConfirm:
@@ -163,6 +165,7 @@ const I18N = {
       "LLDP reports a bridge behind this port — a switch MoonLan does "
       + "not poll. It was not configured here; the devices behind it "
       + "hang off this node.",
+    bridgeHintShort: "An unpolled switch known from LLDP",
     lldpUnknownHint:
       "An LLDP device that announces no capabilities (the optional TLVs "
       + "are disabled on it). The absence of the bridge flag proves "
@@ -174,6 +177,7 @@ const I18N = {
       + "switch sits on the cable and they hang off it. The devices on "
       + "the port stay with that switch: nothing says which bridge each "
       + "of them is behind.",
+    bridgeSharesPortHintShort: "Several LLDP devices on the port: an unmanaged switch is behind it",
     lldpLabel: "LLDP",
     lldpUnidentified: "unidentified LLDP device",
     lldpCrowded: "several LLDP devices",
@@ -182,6 +186,7 @@ const I18N = {
       + "switch sits on the cable. They are all real and all shown — "
       + "but which of them is on the cable itself cannot be told, so no "
       + "link is drawn from this port.",
+    lldpCrowdedHintShort: "Several LLDP devices on the port, so no link is drawn from it",
     portLabelName: "Port name configured on the switch (LLDP)",
     andMore: "and {n} more",
     sameDevice: "Same device as",
@@ -197,6 +202,7 @@ const I18N = {
       "The caption comes from LLDP: the device named itself, but no ARP "
       + "table gave it an address and reverse DNS has no record of it. "
       + "Routers are deliberately kept out of the host inventory.",
+    nameFromLldpHintShort: "Name from LLDP: the IP address and DNS name are unknown",
     externalNetwork: "External network",
     externalPort: "external uplink",
     externalHint:
@@ -205,12 +211,14 @@ const I18N = {
       + "behind it is collected under one node instead of being drawn "
       + "device by device, and switches there raise no alarms: they are "
       + "the boundary, not something anyone forgot to configure.",
+    externalHintShort: "Network boundary: a provider handover or someone else's equipment",
     bridgeAssumedHint:
       "Probably a bridge — an inference, not the device's own claim. "
       + "This switch reports LLDP capabilities for no neighbour at all, "
       + "so the empty field says nothing; the device was taken for a "
       + "bridge because it announced a system name and a management "
       + "address. Its alarm is raised at info for the same reason.",
+    bridgeAssumedHintShort: "A bridge by inference: the device does not say so itself",
     routerAddr: "Router address (routers:)",
     uplinkHintChip: "way out?",
     uplinkWhy_public_address: "A device behind this port answers at {ip}.",
@@ -237,15 +245,18 @@ const I18N = {
       + "is not moving while this lasts. Cables do not change every ten "
       + "minutes, which is why the place is still shown \u2014 but a "
       + "copy of a reading is not an observation.",
+    hostFromSavedHintShort: "Location from the reading of {time}: {switch} did not fit its poll budget",
     rememberedHint:
       "The MAC is visible only on trunk ports right now, but the "
       + "inventory knows the port this device sits on, so it is drawn "
       + "there rather than guessed onto a trunk.",
+    rememberedHintShort: "Port from the inventory: seen only on a trunk right now",
     offlineGroupGuessHint:
       "These devices are missing from the current switch tables and the "
       + "port shown is a trunk — nothing was ever seen there as a "
       + "device, so this location is inherited guesswork rather than a "
       + "record of where they were last seen.",
+    offlineGroupGuessHintShort: "Missing from the switch tables; the port is an inherited guess",
     behindBridge: "Behind",
     colPartial:
       "The switch answered for this counter ({oids}) and then stopped "
@@ -259,6 +270,7 @@ const I18N = {
       + "another port, or its MAC sits in the switch's forwarding table "
       + "behind a different one. LLDP frame forwarding is most likely "
       + "enabled. The data is unreliable and is not used to draw links.",
+    lldpForwardedHintShort: "These LLDP frames did not come from the cable and are not used for links",
     stpBtn: "STP",
     stpTitle: "Spanning tree",
     stpHint:
@@ -286,12 +298,14 @@ const I18N = {
       + "known switch, which is where they are reachable through \u2014 "
       + "not necessarily what they are plugged into. A dashed line means "
       + "a guess at the order, not a measured cable.",
+    linkOrderUnknownShort: "The order of the switches behind the port is unknown; the dashed line is a guess",
     linkCycleUnresolved:
       "This link is part of a ring among polled switches in which no "
       + "port is held in discarding by the spanning tree. One of its "
       + "links is wrong, and nothing in the data says which \u2014 so "
       + "none was removed, and all of them are marked rather than shown "
       + "as facts.",
+    linkCycleUnresolvedShort: "A ring with no blocked port: one of its links is wrong",
     linkStpBlocking:
       "The spanning tree is holding a port of this link in discarding, "
       + "so it carries no traffic. A ring with a blocked port is what a "
@@ -307,6 +321,7 @@ const I18N = {
       "Spanning tree holds this port in the blocking state: the link "
       + "exists but carries no user traffic. It is the standby path of "
       + "a redundant pair.",
+    stpBlockingHintShort: "STP holds the port in blocking: a standby path",
     stpVerdictNone: "STP is not running anywhere in this network",
     stpVerdictSingle: "One spanning tree, root {root}",
     stpVerdictFragmented: "The tree is fragmented: {n} separate roots",
@@ -360,6 +375,7 @@ const I18N = {
       + "direction. Its sysObjectID is {oid} \u2014 see \u201cLoop "
       + "Detection\u201d in the README for how to walk the private "
       + "branch and add a profile to config.yaml.",
+    loopUnsupportedHintShort: "The loop-detection state of this model is unknown",
     loopProfileHint: "profile {profile}, matched by {how}",
     dataFrom: "Data from",
     staleSwitchScans: "{n} scans running without a full poll",
@@ -372,6 +388,7 @@ const I18N = {
       + "timeout of its own so the requests it never answers are given "
       + "up on sooner. See switches: and snmp.host_budget_seconds in "
       + "config.yaml.",
+    staleSwitchHintShort: "Data from {time}: a full poll has not finished for {n} scans running",
     al_switch_stale: "Switch data not refreshing",
     ageUnderMinute: "less than a minute ago",
     ageMinutes: "{n} min ago",
@@ -410,6 +427,7 @@ const I18N = {
       + "\u201cswitch down\u201d alarm is raised for it. Give it more "
       + "time or a shorter SNMP timeout of its own: see "
       + "snmp.host_budget_seconds in config.yaml.",
+    overBudgetHintShort: "Data from {time}: the switch did not fit its poll budget",
     portFlapping: "flapping",
     portFlappingHint:
       "The port has changed link state {n} time(s) inside the window; "
@@ -484,11 +502,13 @@ const I18N = {
       "The MAC is missing from the switch tables, but the address is "
       + "answering: the device may have changed its MAC or it sits "
       + "behind equipment MoonLan does not poll.",
+    staleButAliveHintShort: "The MAC is gone from the tables, but the address answers",
     approximate: "approximate",
     approximateHint:
       "Approximate location: the MAC address is visible only on trunk "
       + "ports, so the device sits behind a switch MoonLan does not poll. "
       + "It is drawn on the trunk it was seen through.",
+    approximateHintShort: "Approximate location: seen only on a trunk",
     approximateWhy:
       "Seen on the downlink trunk {switch} {port} — the side of that "
       + "cable that leads away from the root, which is why the device "
@@ -498,6 +518,7 @@ const I18N = {
       + "address on an uplink says the device is on the far side of "
       + "that cable — not behind the switch that reported it — so "
       + "nothing here can be drawn.",
+    uplinkOnlyHintShort: "Seen only on uplinks, location unknown",
     uplinkOnlySeenOn: "Seen on",
     ev_ip_released: "IP address released",
     staleHint:
@@ -508,6 +529,7 @@ const I18N = {
       "The device is known from ARP but was not found on any port of " +
       "the polled switches — it is most likely behind a router or an " +
       "unpolled switch.",
+    unlocatedHintShort: "Known from ARP, not found on the polled switches' ports",
     offMapHint:
       "The MAC address has not shown up in any switch table for a " +
       "while; the device stays in the inventory until the retention " +
@@ -826,6 +848,8 @@ const I18N = {
     pinnedHint:
       "Этот узел закреплён вручную пользователем. Он не подвергается "
       + "физике, а его расположение сохраняется на сервере карты.",
+    pinnedHintShort: "Этот узел закреплён",
+    hintMore: "Подробнее",
     unpinBtn: "Открепить узел",
     unpinConfirm: "Открепить «{node}» и вернуть его под раскладку?",
     resetLayoutConfirm:
@@ -898,6 +922,7 @@ const I18N = {
       "LLDP сообщает, что за этим портом стоит мост — коммутатор, "
       + "который MoonLan не опрашивает. В конфигурации его нет; "
       + "устройства за ним показаны через этот узел.",
+    bridgeHintShort: "Неопрашиваемый коммутатор, известный по LLDP",
     lldpUnknownHint:
       "Устройство LLDP, которое не объявляет своих возможностей "
       + "(необязательные TLV на нём выключены). Отсутствие признака "
@@ -910,6 +935,7 @@ const I18N = {
       + "кабеле стоит неуправляемый коммутатор, а они подключены за ним. "
       + "Устройства порта остаются за этим коммутатором: за каким именно "
       + "мостом каждое из них — данных нет.",
+    bridgeSharesPortHintShort: "На порту несколько LLDP-устройств — за ним неуправляемый коммутатор",
     lldpLabel: "LLDP",
     lldpUnidentified: "неопознанное устройство LLDP",
     lldpCrowded: "несколько устройств LLDP",
@@ -918,6 +944,7 @@ const I18N = {
       + "стоит неуправляемый коммутатор. Все они настоящие и все "
       + "показаны, но какое именно на кабеле — определить нельзя, "
       + "поэтому связь по этому порту не строится.",
+    lldpCrowdedHintShort: "На порту несколько LLDP-устройств, связь по нему не строится",
     portLabelName: "Подпись порта, заданная на коммутаторе (LLDP)",
     andMore: "и ещё {n}",
     sameDevice: "Тот же аппарат, что",
@@ -933,6 +960,7 @@ const I18N = {
       "Подпись взята из LLDP: устройство назвало себя само, но адреса "
       + "ему не дала ни одна ARP-таблица, и обратный DNS о нём не знает. "
       + "Маршрутизаторы сознательно не входят в инвентарь хостов.",
+    nameFromLldpHintShort: "Имя из LLDP: IP-адрес и DNS-имя неизвестны",
     externalNetwork: "Внешняя сеть",
     externalPort: "внешний аплинк",
     externalHint:
@@ -941,12 +969,14 @@ const I18N = {
       + "один узел вместо россыпи устройств, и коммутаторы там не "
       + "поднимают тревог: это граница сети, а не то, что кто-то забыл "
       + "настроить.",
+    externalHintShort: "Граница сети: стык с провайдером или чужим оборудованием",
     bridgeAssumedHint:
       "Предположительно мост — это вывод, а не заявление самого "
       + "устройства. Коммутатор не сообщает LLDP-возможности ни одного "
       + "соседа, поэтому пустое поле ни о чём не говорит; мостом "
       + "устройство сочтено потому, что объявило системное имя и "
       + "управляющий адрес. По той же причине тревога по нему — info.",
+    bridgeAssumedHintShort: "Мост — предположение: устройство само этого не сообщает",
     routerAddr: "Адрес маршрутизатора (routers:)",
     uplinkHintChip: "выход наружу?",
     uplinkWhy_public_address: "Устройство за этим портом отвечает по {ip}.",
@@ -973,15 +1003,18 @@ const I18N = {
       + "нашли, и пока так продолжается, это время не двигается. "
       + "Кабели не переключаются каждые десять минут, поэтому место "
       + "по-прежнему показано, — но копия показания не наблюдение.",
+    hostFromSavedHintShort: "Место по показанию от {time}: {switch} не уложился в бюджет опроса",
     rememberedHint:
       "Сейчас MAC виден только на магистральных портах, но в инвентаре "
       + "известен порт, на котором это устройство стоит, — поэтому оно "
       + "показано там, а не угадано на магистрали.",
+    rememberedHintShort: "Порт взят из инвентаря: сейчас виден только на магистрали",
     offlineGroupGuessHint:
       "Устройства не найдены в текущих таблицах коммутаторов, а "
       + "показанный порт — магистральный: устройствами их там никогда не "
       + "видели, так что это унаследованная догадка, а не запись о том, "
       + "где их видели в последний раз.",
+    offlineGroupGuessHintShort: "Нет в таблицах коммутаторов; порт — унаследованная догадка",
     behindBridge: "За устройством",
     colPartial:
       "Коммутатор отвечал по этому счётчику ({oids}) и замолчал на "
@@ -995,6 +1028,7 @@ const I18N = {
       + "порту либо его MAC стоит в таблице коммутатора за другим "
       + "портом. Вероятно, включена пересылка LLDP-кадров. Данные "
       + "ненадёжны и для построения связей не используются.",
+    lldpForwardedHintShort: "LLDP-кадры пришли не с кабеля и для связей не используются",
     stpBtn: "STP",
     stpTitle: "Остовное дерево (STP)",
     stpHint:
@@ -1021,12 +1055,14 @@ const I18N = {
       + "по LLDP. Все они нарисованы на ближайшем известном коммутаторе "
       + "— через него они достижимы, но не обязательно в него включены. "
       + "Пунктир означает догадку о порядке, а не измеренный кабель.",
+    linkOrderUnknownShort: "Порядок коммутаторов за портом неизвестен, пунктир — догадка",
     linkCycleUnresolved:
       "Эта связь входит в кольцо между опрашиваемыми коммутаторами, в "
       + "котором ни один порт не заблокирован остовным деревом. Одна из "
       + "его связей неверна, а какая именно — из данных не следует, "
       + "поэтому не снято ничего, а помечены все: кольцо, которое не "
       + "удалось объяснить, не должно выглядеть как факт.",
+    linkCycleUnresolvedShort: "Кольцо без заблокированного порта: одна из связей неверна",
     linkStpBlocking:
       "Остовное дерево держит порт этой связи в блокировке, и трафика по "
       + "ней нет. Кольцо с заблокированным портом — это то, как выглядит "
@@ -1042,6 +1078,7 @@ const I18N = {
       "Остовное дерево держит этот порт в состоянии blocking: связь "
       + "есть, но пользовательский трафик через неё не идёт. Это "
       + "резервный путь избыточной пары.",
+    stpBlockingHintShort: "STP держит порт в blocking — резервный путь",
     stpVerdictNone: "STP в этой сети не работает",
     stpVerdictSingle: "Единое дерево, корень {root}",
     stpVerdictFragmented: "Дерево фрагментировано: {n} корней",
@@ -1095,6 +1132,7 @@ const I18N = {
       + "«петля есть», ни «петли нет». Её sysObjectID \u2014 {oid}; как "
       + "обойти приватную ветку и добавить профиль в config.yaml, "
       + "написано в README, раздел «Loop Detection».",
+    loopUnsupportedHintShort: "Состояние Loop Detection этой модели неизвестно",
     loopProfileHint: "профиль {profile}, опознан по {how}",
     dataFrom: "Данные от",
     staleSwitchScans: "{n} сканов подряд без полного опроса",
@@ -1106,6 +1144,7 @@ const I18N = {
       + "дайте ему больше времени или свой, более короткий таймаут SNMP, "
       + "чтобы запросы, на которые он не ответит, бросали раньше. См. "
       + "switches: и snmp.host_budget_seconds в config.yaml.",
+    staleSwitchHintShort: "Данные от {time}: полный опрос не завершается {n} сканов подряд",
     al_switch_stale: "Данные коммутатора не обновляются",
     ageUnderMinute: "меньше минуты назад",
     ageMinutes: "{n} мин назад",
@@ -1142,6 +1181,7 @@ const I18N = {
       + "слишком медленно, и тревога «коммутатор недоступен» по нему не "
       + "поднимается. Дайте ему больше времени или свой, более короткий "
       + "таймаут SNMP \u2014 см. snmp.host_budget_seconds в config.yaml.",
+    overBudgetHintShort: "Данные от {time}: коммутатор не уложился в бюджет опроса",
     portFlapping: "флаппинг",
     portFlappingHint:
       "Порт менял состояние линка {n} раз(а) за окно; последний переход "
@@ -1218,11 +1258,13 @@ const I18N = {
       "MAC отсутствует в таблицах коммутаторов, но адрес активен: "
       + "устройство могло сменить MAC или подключено за необслуживаемым "
       + "устройством.",
+    staleButAliveHintShort: "MAC пропал из таблиц, но адрес отвечает",
     approximate: "приблизительно",
     approximateHint:
       "Расположение приблизительное: MAC виден только на магистральных "
       + "портах — устройство подключено за неопрашиваемым коммутатором. "
       + "Показано на магистрали, через которую его видно.",
+    approximateHintShort: "Место приблизительное: виден только на магистрали",
     approximateWhy:
       "Виден на нисходящей магистрали {switch} {port} — на той стороне "
       + "кабеля, что ведёт от корня, поэтому устройство и нарисовано "
@@ -1231,6 +1273,7 @@ const I18N = {
       "Виден только на приходящих портах, точное место неизвестно. MAC "
       + "на аплинке говорит, что устройство по ту сторону кабеля, а не "
       + "за коммутатором, который его увидел, — рисовать тут нечего.",
+    uplinkOnlyHintShort: "Виден только на аплинках, место неизвестно",
     uplinkOnlySeenOn: "Виден на",
     ev_ip_released: "IP-адрес освобождён",
     staleHint:
@@ -1241,6 +1284,7 @@ const I18N = {
       "Устройство известно по ARP, но не найдено на портах опрашиваемых " +
       "коммутаторов — вероятно, находится за маршрутизатором или " +
       "неопрашиваемым коммутатором.",
+    unlocatedHintShort: "Известен по ARP, на портах опрашиваемых коммутаторов не найден",
     offMapHint:
       "MAC-адрес давно не появлялся в таблицах коммутаторов; устройство " +
       "остаётся в инвентаре до истечения срока хранения.",

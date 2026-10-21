@@ -3900,10 +3900,6 @@ function switchName(ip) {
   return sw ? sw.name : ip;
 }
 
-/* Fills the details card, hoisting its own <h3> into the panel head.
-   Each branch below writes its title as part of the HTML — that is
-   where it belongs, next to the thing it titles — and the head is
-   where it has to end up, so it stays put while the card scrolls. */
 /* Text from outside the page — a maker's name from the IEEE register —
    into one of the cards built as HTML. */
 function escapeHtml(text) {
@@ -3938,6 +3934,26 @@ function vendorRow(item) {
   return `<dt>${t("vendorLabel")}</dt><dd>${value}</dd>`;
 }
 
+/* An explanation on a card, in one line that names the fact itself —
+   what is unusual or unknown about this thing. Why, and what to do
+   about it, is the full text: a tooltip on the line, and behind ⓘ a
+   paragraph that opens in place, because a phone has no hover. */
+function hintBlock(shortText, longText) {
+  return `<p class="hint" title="${escapeHtml(longText)}">${escapeHtml(shortText)} ` +
+    `<button type="button" class="hint-more" aria-expanded="false" ` +
+    `aria-label="${escapeHtml(t("hintMore"))}">ⓘ</button></p>` +
+    `<p class="hint hint-full hidden">${escapeHtml(longText)}</p>`;
+}
+
+/* hintBlock() for a key whose short line is `<key>Short` */
+function hintKey(key, params = {}) {
+  return hintBlock(fmt(key + "Short", params), fmt(key, params));
+}
+
+/* Fills the details card, hoisting its own <h3> into the panel head.
+   Each branch below writes its title as part of the HTML — that is
+   where it belongs, next to the thing it titles — and the head is
+   where it has to end up, so it stays put while the card scrolls. */
 function setDetails(html) {
   els.detailsBody.innerHTML = html;
   const heading = els.detailsBody.querySelector("h3");
@@ -4000,14 +4016,12 @@ function showDetails(nodeId) {
     const loop = sw.loop || {};
     html = `<h3>${sw.name}</h3>
       ${sw.over_budget
-        ? `<p class="hint">${fmt(
+        ? hintKey(
             sw.over_budget_scans >= 2 ? "staleSwitchHint" : "overBudgetHint",
             { time: fmtTime(sw.polled_at), n: sw.over_budget_scans }
-          )}</p>`
+          )
         : ""}${loop.supported === false
-        ? `<p class="hint">${fmt("loopUnsupportedHint", {
-            oid: loop.sys_object_id || "—",
-          })}</p>`
+        ? hintKey("loopUnsupportedHint", { oid: loop.sys_object_id || "—" })
         : ""}<dl>
       <dt>${t("ipAddr")}</dt><dd>${sw.ip}</dd>
       <dt>${t("bridgeMac")}</dt><dd>${sw.mac || "—"}</dd>
@@ -4038,9 +4052,9 @@ function showDetails(nodeId) {
       )
       .join("");
     html = `<h3>${fmt("offlineGroupTitle", { n: group.count })}</h3>
-      <p class="hint">${
-        group.approximate ? t("offlineGroupGuessHint") : t("offlineGroupHint")
-      }</p><dl>
+      ${group.approximate
+        ? hintKey("offlineGroupGuessHint")
+        : `<p class="hint">${t("offlineGroupHint")}</p>`}<dl>
       <dt>${t("switchLabel")}</dt><dd>${group.switch}</dd>
       <dt>${t("portLabel")}</dt><dd>${group.port}</dd>
       ${group.via_name
@@ -4088,17 +4102,17 @@ function showDetails(nodeId) {
     // this node", "they stay on the unmanaged switch" and "everything
     // behind here is somebody else's" cannot all be true at once
     const bridgeHint = bridge.external
-      ? t("externalHint")
+      ? "externalHint"
       : bridge.cap_assumed
-      ? t("bridgeAssumedHint")
+      ? "bridgeAssumedHint"
       : bridge.shares_port
-      ? t("bridgeSharesPortHint")
-      : t("bridgeHint");
+      ? "bridgeSharesPortHint"
+      : "bridgeHint";
     html = `<h3>${bridge.name}</h3>
-      <p class="hint">${bridgeHint}</p>
+      ${hintKey(bridgeHint)}
       ${bridge.lldp_crowded && !bridge.shares_port
-        ? `<p class="hint">${t("lldpCrowdedHint")}</p>` : ""}
-      ${bridge.lldp_forwarded ? `<p class="hint">${t("lldpForwardedHint")}</p>` : ""}
+        ? hintKey("lldpCrowdedHint") : ""}
+      ${bridge.lldp_forwarded ? hintKey("lldpForwardedHint") : ""}
       <dl>
       <dt>${t("descr")}</dt><dd>${bridge.sys_desc || "—"}</dd>
       <dt>${t("chassisId")}</dt><dd>${bridge.chassis_id}</dd>
@@ -4146,7 +4160,7 @@ function showDetails(nodeId) {
       )
       .join("");
     html = `<h3>${t("externalNetwork")}</h3>
-      <p class="hint">${t("externalHint")}</p><dl>
+      ${hintKey("externalHint")}<dl>
       <dt>${t("switchLabel")}</dt><dd>${external.switch}</dd>
       <dt>${t("portLabel")}</dt><dd>${external.port}</dd>
       ${external.via_name
@@ -4172,34 +4186,32 @@ function showDetails(nodeId) {
     // A device seen only on uplinks is a third case: it was seen this
     // very scan, and every sighting was of the cable it is NOT behind.
     const hint = host.uplink_only
-      ? t("uplinkOnlyHint")
+      ? hintKey("uplinkOnlyHint")
       : offMap
       ? host.ip
-        ? t("unlocatedHint")
-        : t("offMapHint")
+        ? hintKey("unlocatedHint")
+        : `<p class="hint">${t("offMapHint")}</p>`
       : host.stale
-      ? t("staleHint")
+      ? `<p class="hint">${t("staleHint")}</p>`
       : "";
     // a stale record whose address ARP still confirms is not a dead
     // host: the device most likely changed its MAC
     const aliveByIp = host.stale && !offMap && host.ping_up && host.ip_confirmed;
     html = `<h3>${hostLabel(host)}</h3>
-      ${labelFromLldp(host) ? `<p class="hint">${t("nameFromLldpHint")}</p>` : ""}
+      ${labelFromLldp(host) ? hintKey("nameFromLldpHint") : ""}
       ${host.approximate
-        ? `<p class="hint">${t("approximateHint")}<br>${fmt("approximateWhy", {
-            switch: switchName(host.switch),
-            port: host.port,
-          })}</p>`
+        ? hintBlock(t("approximateHintShort"), t("approximateHint") + " " +
+            fmt("approximateWhy", { switch: switchName(host.switch), port: host.port }))
         : ""}
-      ${host.remembered ? `<p class="hint">${t("rememberedHint")}</p>` : ""}
+      ${host.remembered ? hintKey("rememberedHint") : ""}
       ${host.from_saved
-        ? `<p class="hint">${fmt("hostFromSavedHint", {
+        ? hintKey("hostFromSavedHint", {
             switch: switchName(host.switch),
             time: fmtTime(host.reading_at),
-          })}</p>`
+          })
         : ""}
-      ${aliveByIp ? `<p class="hint">${t("staleButAliveHint")}</p>` : ""}
-      ${hint ? `<p class="hint">${hint}</p>` : ""}<dl>
+      ${aliveByIp ? hintKey("staleButAliveHint") : ""}
+      ${hint}<dl>
       <dt>${t("name")}</dt><dd>${host.name || "—"}</dd>
       <dt>${t("ipAddr")}</dt><dd>${host.ip || "—"}</dd>
       <dt>${t("ipConfirmedLabel")}</dt><dd>${
@@ -4246,12 +4258,12 @@ function showDetails(nodeId) {
         needRole("user") ? " off" : ""}">
         ${host.monitored ? "★" : "☆"} ${t("monitorBtn")}</button>`;
   }
-  // Placed by hand: say so, and offer to hand it back to the physics
-  // engine. The map must answer "did MoonLan arrange this or did I"
-  // without anyone having to guess.
+  // Pinned: say so, and offer to hand it back to the physics engine.
+  // The map must answer "did MoonLan arrange this or did I" without
+  // anyone having to guess.
   if (savedLayout[nodeId] && savedLayout[nodeId].pinned) {
     html +=
-      `<p class="hint">${t("pinnedHint")}</p>` +
+      hintKey("pinnedHint") +
       `<button id="unpin-btn" class="panel-btn${needRole("user") ? " off" : ""}">${t("unpinBtn")}</button>`;
   }
   shownDetails = { type: "node", id: nodeId };
@@ -4749,15 +4761,15 @@ function showLinkDetails(edgeId) {
   html += `<dt>${t("linkSource")}</dt><dd title="${sourceHint}">${sourceLabel}</dd>`;
   html += "</dl>";
   if (link.stp_blocking) {
-    html += `<p class="hint">${t("stpBlockingHint")}</p>`;
+    html += hintKey("stpBlockingHint");
   }
   // What is uncertain about this line, said in the card and not only
   // in a tooltip somebody has to know to hover
   if (link.order_unknown) {
-    html += `<p class="hint">${t("linkOrderUnknown")}</p>`;
+    html += hintKey("linkOrderUnknown");
   }
   if (link.cycle_unresolved) {
-    html += `<p class="hint">${t("linkCycleUnresolved")}</p>`;
+    html += hintKey("linkCycleUnresolved");
   }
   shownDetails = { type: "link", id: edgeId };
   setDetails(html);
@@ -5242,6 +5254,15 @@ async function rescan() {
 els.search.addEventListener("input", applySearchFilter);
 
 els.detailsClose.addEventListener("click", hideDetails);
+// ⓘ after a card's one-line hint opens the full text under it, and
+// closes it again; a button, so Enter and Space do the same
+els.detailsBody.addEventListener("click", (event) => {
+  const more = event.target.closest(".hint-more");
+  if (!more) return;
+  const full = more.parentElement.nextElementSibling;
+  const open = !full.classList.toggle("hidden");
+  more.setAttribute("aria-expanded", String(open));
+});
 els.journalBtn.addEventListener("click", toggleJournal);
 els.journalClose.addEventListener("click", () =>
   els.journal.classList.add("hidden")
@@ -5309,7 +5330,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 /* `P` on the selection: if anything in it is loose, pin the lot;
-   otherwise release the lot. One key, and its effect is predictable
+   otherwise unpin the lot. One key, and its effect is predictable
    from what is on screen. */
 function togglePinOnSelection() {
   if (!network) return;

@@ -319,6 +319,16 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
 
 /* ---------- details panel ---------- */
 #details .hint { margin: 0 0 6px; font-size: 0.82rem; color: var(--text-dim); }
+/* the full text of a one-line hint, behind its ⓘ */
+#details .hint-more {
+  border: none; background: none; padding: 0 2px; margin: 0;
+  font: inherit; line-height: 1; color: var(--text-dim); cursor: pointer;
+}
+#details .hint-more:hover,
+#details .hint-more[aria-expanded="true"] { color: var(--link); }
+#details .hint-more:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; border-radius: 3px; }
+#details .hint-full { padding-left: 8px; border-left: 2px solid var(--line); }
+#details dl + .hint, #details ul + .hint, #details .panel-btn + .hint { margin-top: 10px; }
 #details dl { margin: 0; font-size: 0.85rem; }
 #details dt { color: var(--text-dim); margin-top: 8px; }
 #details dd { margin: 2px 0 0; font-family: ui-monospace, monospace; word-break: break-all; }
