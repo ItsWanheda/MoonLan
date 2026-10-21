@@ -22,7 +22,7 @@
 | 🗺️ Topology | Direct-link inference, trunk awareness, STP-aware rings, unmanaged bridges |
 | 📈 Monitoring | Ping, traffic rates, errors, discards, flapping, loop detection |
 | 🚨 Alarms | Stateful alarms with Email, Telegram, Syslog notifications |
-| 🧭 Operations | Shared layout, pinned nodes, search, journal, port/STP/alarms panels |
+| 🧭 Operations | Shared layout, pinned nodes, port numbers on the lines, search, journal, port/STP/alarms panels |
 | 🔐 Access | Sign-in with three roles, TOTP or a key (passkey) for administrators, HTTPS of its own or behind a proxy, accounts from the server's shell |
 | 🧪 Diagnostics | FDB, hosts, ports, STP, loop detection, topology, arbitrary MIB walks |
 | 🛡️ Safety | Per-host poll budgets, stale-data labels, command argument validation |
@@ -273,6 +273,7 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 | v0.7.6 ✓ | HTTPS (TLS of its own or behind a reverse proxy) and signing in with a key |
 | v0.7.7 ✓ | "Without a password" means without a password |
 | v0.7.8 ✓ | Who made each device (IEEE register); one menu per account in Users |
+| v0.7.9 ✓ | Port numbers on the lines, straight edges, short cards |
 | v0.8 | Export to PDF and Draw.io, MAC address info import |
 | v0.9 | Windows computer inventory (WMI/WinRM) |
 

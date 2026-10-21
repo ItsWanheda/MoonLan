@@ -6,6 +6,60 @@ for before the next one started.
 
 Русская версия — [CHANGELOG_RU.md](CHANGELOG_RU.md).
 
+## v0.7.9 — 2026-10-21
+
+Port numbers on the lines, straight edges, short cards.
+
+**Lines do not bend.** The edges had no `smooth` option, so vis-network
+hung each of them on an invisible support node of the physics. With
+the layout frozen the supports stayed where they were, and a node
+dragged away pulled its lines into arcs through its old spot. Lines
+are straight now and follow their nodes — frozen, in Arrange or with
+the physics running — and the physics has one body fewer per edge to
+push around. The map settles as it did.
+
+**Two cables between two switches.** With no LAG and spanning tree
+holding one of them in blocking, the map drew one link: whichever
+cable LLDP listed last, the blocked one as likely as not, and the
+other cable was on no map. The link of the tree is now the cable that
+carries traffic, and the second is a link of its own beside it —
+curved, so the two do not lie on each other — with its own ports and
+its own STP state (`parallel: true` in `/api/topology`). From one end
+alone, one neighbour on two ports is what forwarded LLDP looks like,
+and that stays the default reading; it is a second cable only when both
+ends report each cable port for port, nobody else talks on those
+ports, and one of the cables is blocked. The demo has such a pair,
+core-sw — access-sw-2, the second cable on an SFP port named
+TenGigabitEthernet1/0/1.
+
+**Pin and Unpin.** The menu said "Place here" and "Release", the header
+"placed by hand", and the Russian interface had three verbs for two
+actions. A node is pinned and unpinned now: in the menu, the header,
+the hints, the journal, the docs and the service's own log.
+
+**Short cards.** Some cards had more explanation than data. Each
+explanation is one line now that names the fact — "This node is
+pinned", "The loop-detection state of this model is unknown" — and the
+full text, why and what to do about it, is the line's tooltip and,
+behind ⓘ, a paragraph that opens in the card: a phone has no hover.
+
+**The list folds away on a phone.** At 720 px and narrower the list and
+the search took up to 40 % of the screen above the map. A "List and
+search ▴/▾" bar between the header and the map folds them away; the
+map takes the room at once, looking at the same spot, and the choice is
+kept in the browser.
+
+**Port numbers on the lines.** A green tag at the end of a line with
+the port it leaves from, at the node the port belongs to, the speed
+staying in the middle. Off, for the selection (the default) or
+everywhere, from a button next to Freeze and Arrange. A selected switch
+gets the tags of its own ends only; a selected device, group or bridge
+the one at the switch end of its line; a selected line both ends. A
+long port name is shortened to the number it ends with, an aggregate
+shows its members ("3,4", "25+3"); a tag on a red line is red;
+"everywhere" stops below half zoom. Drawn on the canvas over the map,
+11 px on the screen at any zoom.
+
 ## v0.7.8 — 2026-10-01
 
 Who made the device, and one menu per account.

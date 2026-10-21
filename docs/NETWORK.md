@@ -70,6 +70,17 @@ port. Such a port is marked in the ports panel and none of its data is
 used to draw links. If you see the mark, turn the setting off: it is
 not doing anything useful for you either.
 
+**Two cables to the same switch are not forwarding.** With no LAG
+between them, one neighbour on two ports looks exactly like forwarding
+from either end alone, and that stays the default reading. Both ends
+together tell them apart (v0.7.9): when each cable is reported port for
+port from both sides, nobody else talks on those ports, the other
+switch's MAC (where a table has it) is behind one of them, and spanning
+tree blocks one of the cables, the ports lose the forwarding mark. The
+cable that carries traffic is the link of the tree, and the blocked one
+is drawn beside it. Two cables and nothing blocked would be a loop, and
+stay marked.
+
 **Several devices behind one port is not forwarding.** It is an
 unmanaged switch on the cable with several talkers behind it — the
 normal shape of an access port. All of them are found and shown, and

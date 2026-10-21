@@ -1,6 +1,6 @@
 # What MoonLan does
 
-Everything MoonLan does, as of v0.7.5 — the list the README used to carry. The README keeps the summary; each item here links to the page that explains it.
+Everything MoonLan does, as of v0.7.9 — the list the README used to carry. The README keeps the summary; each item here links to the page that explains it.
 
 ![Alarms panel](img/alarms.png)
 
@@ -37,6 +37,16 @@ Everything MoonLan does, as of v0.7.5 — the list the README used to carry. The
   one device before a statement by both. A ring nothing can account for
   keeps all its links, marked: erasing an arbitrary cable would be
   worse than admitting it cannot be explained.
+- Two cables between the same two switches, with no LAG and the
+  spanning tree holding one of them in blocking, are two lines: the
+  link of the tree is the cable that carries traffic, and the other is
+  drawn beside it — a curve, red and dashed while it is blocked — with
+  its own ports and its own STP state. From one switch alone, one
+  neighbour on two ports looks exactly like forwarded LLDP; it counts
+  as a second cable only when both ends report each cable port for
+  port, nobody else talks on those ports, and one of the cables is
+  blocked. Every other line on the map is straight and follows its
+  nodes, frozen or not.
 - Link stability: FDB entries are merged over the last 3 polls, so links
   do not flicker when MAC table entries age out.
 - LACP (IEEE8023-LAG-MIB): an aggregate is drawn as a single thick line
@@ -157,6 +167,28 @@ Everything MoonLan does, as of v0.7.5 — the list the README used to carry. The
   backdrop so it stays readable over edges and neighbours, and the
   force layout can be stopped with the "Freeze layout" button when the
   map is where you want it.
+- Port numbers on the lines: a green tag at the end of a line with the
+  number of the port it leaves from, at the node the port belongs to.
+  Three modes, from the button next to Freeze and Arrange, kept in the
+  browser: **off**; **for the selection** (the default) — a selected
+  switch gets the tags of its own ends only, never the far end of its
+  lines, which is somebody else's port; a selected device, group or
+  bridge gets the tag at the switch end of its line, the port it is
+  plugged into; a selected line gets both ends; selecting from the list
+  or the search works the same as a click on the map; and
+  **everywhere** — every line, until the map is zoomed out below half
+  size, where tags would be a green rash. A long port name is shortened
+  to the number it ends with ("GigabitEthernet1/0/3" → "1/0/3"), a LACP
+  aggregate shows the members of its side ("3,4", or "25+3" for more
+  than two), a LAG trunk without members "LAG", an unknown port "?".
+  A tag on a red line — a loop, a blocked port — is red; the tags keep
+  their size whatever the zoom, and leave the speed in the middle of
+  the line free.
+- Short cards: an explanation on a card is one line that says what is
+  unusual or unknown — "The loop-detection state of this model is
+  unknown", "This node is pinned" — and why, and what to do about it,
+  is the line's tooltip and, behind ⓘ, a paragraph that opens in the
+  card (a phone has no hover).
 - Continuous ping monitoring of all hosts and switches: green/grey status
   indicator, time of the last reply. Pings follow IP ownership: a host
   whose MAC left every switch table and whose address ARP no longer
@@ -294,7 +326,10 @@ Everything MoonLan does, as of v0.7.5 — the list the README used to carry. The
   alarm raises/clears. Data is stored in SQLite and survives restarts.
 - Two-panel web UI: device list with search (name, IP or MAC) on the left,
   interactive auto-refreshing network map on the right. English and Russian
-  interface languages.
+  interface languages. On a phone (720 px and narrower) the list stands
+  over the map, and a "List and search" bar between the header and the
+  map folds it away: the map takes the whole height at once, looking at
+  the same spot, and the choice is kept in the browser.
 - Demo mode with a virtual network — explore the UI without real switches.
 - SNMP diagnostic tool: `python -m moonlan.diag <ip>`.
 
