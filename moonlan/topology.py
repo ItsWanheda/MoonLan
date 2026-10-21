@@ -381,6 +381,14 @@ def resolve_remote_port(
     return None, (port_id or port_desc or "?")
 
 
+def _stp_blocking_names(sw: SwitchData) -> set[str]:
+    """Ports a running spanning tree holds in blocking on this switch."""
+    stp = getattr(sw, "stp", None)
+    if stp is None or not getattr(stp, "operating", False):
+        return set()
+    return {p.name for p in stp.blocking_ports() if p.name}
+
+
 def lldp_link_candidates(
     switches: list[SwitchData],
 ) -> dict[frozenset, dict]:
@@ -431,6 +439,16 @@ def lldp_link_candidates(
             # after whichever member came last would contradict the LAG
             # the rest of the map draws.
             local = aggregate_port(sw, neighbor.local_ifindex)
+            # Two cables to the same switch (no LAG): the link is the one
+            # carrying traffic — not the one STP blocks — else the lower
+            # port, not whichever LLDP listed last. The other cable is
+            # drawn beside it (parallel_links).
+            held = entry.get(sw.ip)
+            if held is not None and held["if_index"] != local:
+                blocked = _stp_blocking_names(sw)
+                rank = lambda index: (port_name(sw, index) in blocked, index)
+                if rank(held["if_index"]) <= rank(local):
+                    continue
             entry[sw.ip] = {
                 "if_index": local,
                 "name": port_name(sw, local),
@@ -444,14 +462,12 @@ def lldp_link_candidates(
             if remote_index is not None:
                 remote_index = aggregate_port(other, remote_index)
                 remote_name = port_name(other, remote_index)
-            entry.setdefault(
-                "remote:" + other.ip,
-                {
-                    "if_index": remote_index,
-                    "name": remote_name,
-                    "matched_by": "remote",
-                },
-            )
+            # the far end as seen from the cable chosen above
+            entry["remote:" + other.ip] = {
+                "if_index": remote_index,
+                "name": remote_name,
+                "matched_by": "remote",
+            }
     resolved: dict[frozenset, dict] = {}
     for key, entry in candidates.items():
         sides = {}
@@ -1248,6 +1264,85 @@ def mark_stp_blocking(
                     link["stp_blocking_side"] = sw.ip
 
 
+def parallel_links(
+    switches: list[SwitchData], links: list[dict]
+) -> list[dict]:
+    """The second (third…) cable between two switches that already have
+    a link (v0.7.9).
+
+    LLDP is collected per pair of switches, so two cables between the
+    same two — no LAG, spanning tree holding one of them in blocking —
+    came out as one link, whichever LLDP listed last, and the other
+    cable was on no map. Every further cable LLDP shows between a pair
+    that has a link is returned here as a link of its own, marked
+    `parallel`: drawn beside the first, with its own ports and its own
+    STP state. A LACP bundle stays one link — its members are one
+    aggregate port — and a cable that shares a port with the link
+    already drawn is that link.
+
+    Each side's own end comes from its own port table; the far end is
+    its report about the other switch, taken from the other side's own
+    report of the same cable where there is one.
+    """
+    by_pair = {frozenset({link["a"], link["b"]}): link for link in links}
+    by_ip = {sw.ip: sw for sw in switches}
+    mac_to_switch: dict[str, SwitchData] = {}
+    for sw in switches:
+        for mac in sw.own_macs | ({sw.bridge_mac} if sw.bridge_mac else set()):
+            mac_to_switch.setdefault(mac, sw)
+    # pair -> switch ip -> {its own port: the other switch's port or None}
+    reported: dict[frozenset, dict[str, dict[int, int | None]]] = {}
+    for sw in switches:
+        for neighbor in sw.lldp_neighbors:
+            if neighbor.local_ifindex is None:
+                continue
+            if neighbor.local_ifindex in sw.lldp_forwarded:
+                continue
+            if neighbor.local_ifindex in sw.lldp_crowded:
+                continue
+            other = mac_to_switch.get(neighbor.chassis_id)
+            if other is None or other.ip == sw.ip:
+                continue
+            key = frozenset({sw.ip, other.ip})
+            if key not in by_pair:
+                continue
+            remote, _ = resolve_remote_port(
+                other, neighbor.port_id, neighbor.port_desc
+            )
+            if remote is not None:
+                remote = aggregate_port(other, remote)
+            local = aggregate_port(sw, neighbor.local_ifindex)
+            reported.setdefault(key, {}).setdefault(sw.ip, {})[local] = remote
+    extra: list[dict] = []
+    for key, sides in sorted(reported.items(), key=lambda kv: sorted(kv[0])):
+        link = by_pair[key]
+        a, b = by_ip[link["a"]], by_ip[link["b"]]
+        a_said = sides.get(a.ip, {})
+        b_said = sides.get(b.ip, {})
+        # cables as (a's port, b's port): a's own reports first, the far
+        # end filled in from b's own report where b names a's port
+        cables: set[tuple[int | None, int | None]] = set()
+        for pa, pb in a_said.items():
+            mine = [qb for qb, qa in b_said.items() if qa == pa]
+            cables.add((pa, mine[0] if mine else pb))
+        for pb, pa in b_said.items():
+            if not any(c[1] == pb for c in cables) and pa not in a_said:
+                cables.add((pa, pb))
+        drawn = (link["a_port"], link["b_port"])
+        for pa, pb in sorted(cables, key=lambda c: (c[0] or 0, c[1] or 0)):
+            names = (port_name(a, pa) if pa is not None else "?",
+                     port_name(b, pb) if pb is not None else "?")
+            # the cable already drawn, seen from either end
+            if names[0] == drawn[0] or names[1] == drawn[1]:
+                continue
+            if "?" in names and "?" in drawn:
+                continue
+            cable = _make_link(a, pa, b, pb, source="lldp")
+            cable["parallel"] = True
+            extra.append(cable)
+    return extra
+
+
 # How much a link is worth when one of a ring has to go. A statement by
 # both devices beats a statement by one beats an inference from the
 # forwarding tables.
@@ -1613,6 +1708,12 @@ def build_topology(
     mark_stp_blocking(switches, links)
     dropped += resolve_cycles(links, lldp_pairs, uplinks, info.get("root"))
     info["dropped_links"] = dropped
+    # A second cable between two switches already linked: a link of its
+    # own, with its STP state — but only on the map. It joins `links`
+    # at the very end: everything below reads the links as the tree
+    # (depths, uplinks), and a blocked cable is no part of the tree.
+    parallel = parallel_links(switches, links)
+    mark_stp_blocking(switches, parallel)
     info["lldp_forwarded"] = {
         sw.ip: sorted(port_name(sw, i) for i in sw.lldp_forwarded)
         for sw in switches if sw.lldp_forwarded
@@ -1620,6 +1721,14 @@ def build_topology(
 
     # 2. Trunk ports: they lead to other switches and carry no hosts
     trunks = trunk_ports(switches, switches_on_port, uplinks, lldp_pairs)
+    # …the ports of a second cable as well
+    for cable in parallel:
+        for side in ("a", "b"):
+            sw = switch_by_ip[cable[side]]
+            index = next((i for i, p in sw.ports.items()
+                          if p.name == cable[f"{side}_port"]), None)
+            if index is not None:
+                trunks.setdefault(sw.ip, {}).setdefault(index, "parallel")
     # ifIndexes of every trunk port per switch — NOT config.uplink_ports,
     # which is about ports leaving the network
     trunk_port_ids: dict[str, set[int]] = {
@@ -2089,7 +2198,7 @@ def build_topology(
     # a guess.
     info["uplink_only"] = uplink_only
     return (
-        switch_dicts, links, hosts, pseudo_switches, vlan_names,
+        switch_dicts, links + parallel, hosts, pseudo_switches, vlan_names,
         bridges, info,
     )
 

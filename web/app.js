@@ -2786,7 +2786,10 @@ function fmtSpeed(mbps) {
 }
 
 function linkId(link) {
-  return "link:" + link.a + "|" + link.b;
+  // a second cable between the same two switches (v0.7.9) is told
+  // apart by its ports; the first keeps the id it always had
+  return "link:" + link.a + "|" + link.b +
+    (link.parallel ? "|" + link.a_port + "|" + link.b_port : "");
 }
 
 /* "34" for big rates, "3.4" for small ones, "—" when unknown */
@@ -3508,6 +3511,8 @@ function buildGraphData() {
     }, host.switch, host.port));
   }
 
+  curveParallelEdges(edges);
+
   // The physics engine walks its nodes in the order they were added.
   // It is not random, so two pages that start from the same positions
   // in the same order end up with the same picture — and the order of
@@ -3515,6 +3520,41 @@ function buildGraphData() {
   // keep theirs: the first edge into a node names what it hangs off.
   nodes.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return { nodes, edges };
+}
+
+/* Lines are straight (v0.7.9): vis's default "dynamic" curve hangs
+   every edge on an invisible support node of the physics, and with the
+   physics frozen those stayed where they were — a node dragged away
+   pulled its edges into arcs through the old spot. Two edges between
+   the same pair would lie on each other, though, so those get fixed
+   curves computed from their ends alone: alternately to either side,
+   further out for every next pair. */
+function curveParallelEdges(edges) {
+  const byPair = new Map();
+  for (const edge of edges) {
+    const key = [edge.from, edge.to].sort().join("\u0000");
+    if (!byPair.has(key)) byPair.set(key, []);
+    byPair.get(key).push(edge);
+  }
+  for (const group of byPair.values()) {
+    if (group.length < 2) {
+      // said outright: a refresh merges into the edge vis already has,
+      // and a curve it once had would stay
+      group[0].smooth = false;
+      continue;
+    }
+    group.forEach((edge, i) => {
+      // "clockwise" is relative to the edge's own direction: an edge
+      // drawn the other way round bends to the other side
+      const reversed = edge.from > edge.to;
+      const clockwise = (i % 2 === 0) !== reversed;
+      edge.smooth = {
+        enabled: true,
+        type: clockwise ? "curvedCW" : "curvedCCW",
+        roundness: 0.15 * (Math.floor(i / 2) + 1),
+      };
+    });
+  }
 }
 
 /* ---------- label backdrop for the selected node ---------- */
@@ -3613,6 +3653,9 @@ function renderGraph() {
       // them vis's own behaviour, which is better than a reimplementation
       interaction: { hover: true, multiselect: true },
       nodes: { borderWidthSelected: 4 },
+      // straight lines that follow their nodes, frozen or not; parallel
+      // ones are curved one by one (curveParallelEdges)
+      edges: { smooth: false },
       // Every node arrives with a position, but whatever vis still
       // decides on its own should come out the same in every tab
       layout: { randomSeed: 7 },
