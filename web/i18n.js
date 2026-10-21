@@ -7,6 +7,7 @@ const I18N = {
     title: "MoonLan — network map",
     tagline: "local network map",
     journalBtn: "Journal",
+    sidebarToggle: "List and search",
     freezeBtn: "Freeze layout",
     layoutPinnedMark: "pinned: {n}",
     layoutPinnedHint:
@@ -763,6 +764,7 @@ const I18N = {
     title: "MoonLan — карта сети",
     tagline: "карта локальной сети",
     journalBtn: "Журнал",
+    sidebarToggle: "Список и поиск",
     freezeBtn: "Заморозить раскладку",
     layoutPinnedMark: "закреплено: {n}",
     layoutPinnedHint:

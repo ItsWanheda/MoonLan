@@ -41,6 +41,8 @@ const els = {
   actionsBody: document.getElementById("actions-body"),
   actionsClose: document.getElementById("actions-close"),
   moreBtn: document.getElementById("more-btn"),
+  main: document.querySelector("main"),
+  sidebarToggle: document.getElementById("sidebar-toggle"),
   moreMenu: document.getElementById("more-menu"),
   userMenu: document.getElementById("user-menu"),
   notice: document.getElementById("notice"),
@@ -140,6 +142,7 @@ function applyStatic() {
   els.langRu.classList.toggle("active", lang === "ru");
   els.langEn.classList.toggle("active", lang === "en");
   applyFreeze();
+  applySidebarCollapsed();
 }
 
 function setLang(newLang) {
@@ -2744,6 +2747,38 @@ function toggleFreeze() {
   applyFreeze();
 }
 
+/* ---------- the list on a phone ----------
+
+   At 720 px and narrower the list and the search stand over the map
+   and take up to 40 % of the screen; a bar between the header and the
+   map folds them away. Wider than that there is no bar, and the side
+   panel is there whatever was stored. */
+const SIDEBAR_KEY = "moonlan-sidebar-collapsed";
+let sidebarCollapsed = localStorage.getItem(SIDEBAR_KEY) === "1";
+
+function applySidebarCollapsed() {
+  els.main.classList.toggle("sidebar-collapsed", sidebarCollapsed);
+  els.sidebarToggle.textContent =
+    t("sidebarToggle") + (sidebarCollapsed ? " ▾" : " ▴");
+  els.sidebarToggle.setAttribute("aria-expanded", sidebarCollapsed ? "false" : "true");
+}
+
+function toggleSidebar() {
+  // the map gets the room at once, looking at the same spot
+  const view = network && {
+    position: network.getViewPosition(),
+    scale: network.getScale(),
+  };
+  sidebarCollapsed = !sidebarCollapsed;
+  localStorage.setItem(SIDEBAR_KEY, sidebarCollapsed ? "1" : "0");
+  applySidebarCollapsed();
+  if (network) {
+    network.setSize("100%", "100%");
+    network.moveTo({ ...view, animation: false });
+    network.redraw();
+  }
+}
+
 /* ---------- helpers ---------- */
 
 /* Host caption: DNS name, else IP, else what LLDP called the device,
@@ -5272,6 +5307,7 @@ for (const th of document.querySelectorAll("#ports th[data-sort]")) {
   th.addEventListener("click", () => setPortsSort(th.dataset.sort));
 }
 els.freezeBtn.addEventListener("click", toggleFreeze);
+els.sidebarToggle.addEventListener("click", toggleSidebar);
 els.arrangeBtn.addEventListener("click", () => allowed(els.arrangeBtn) && toggleArrangeMode());
 document.addEventListener("click", (event) => {
   if (!els.nodeMenu.contains(event.target)) closeNodeMenu();

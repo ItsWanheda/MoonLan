@@ -51,6 +51,10 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <main>
+    <!-- On a phone the list stands over the map; this bar folds it
+         away (v0.7.9). Not shown wider than 720 px. -->
+    <button id="sidebar-toggle" class="sidebar-toggle" type="button"
+            aria-controls="sidebar" aria-expanded="true"></button>
     <aside id="sidebar">
       <input id="search" type="search" autocomplete="off">
       <section>
