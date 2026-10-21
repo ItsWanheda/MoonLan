@@ -3591,13 +3591,14 @@ function buildGraphData() {
   return { nodes, edges };
 }
 
-/* Lines are straight (v0.7.9): vis's default "dynamic" curve hangs
-   every edge on an invisible support node of the physics, and with the
-   physics frozen those stayed where they were — a node dragged away
-   pulled its edges into arcs through the old spot. Two edges between
-   the same pair would lie on each other, though, so those get fixed
-   curves computed from their ends alone: alternately to either side,
-   further out for every next pair. */
+/* A line is vis's "dynamic" curve: it hangs on an invisible support
+   node of the physics, and the supports push everything else apart —
+   that is what keeps branches and groups of devices spread out.
+   v0.7.9 made lines straight and the map shrank; v0.7.10 put the
+   curves back and moves the supports of a dragged node itself
+   (followCurves). Two links between one pair would lie on each other,
+   though, so those get fixed curves computed from their ends alone:
+   alternately to either side, further out for every next pair. */
 function curveParallelEdges(edges) {
   const byPair = new Map();
   for (const edge of edges) {
@@ -3609,7 +3610,7 @@ function curveParallelEdges(edges) {
     if (group.length < 2) {
       // said outright: a refresh merges into the edge vis already has,
       // and a curve it once had would stay
-      group[0].smooth = false;
+      group[0].smooth = { enabled: true, type: "dynamic" };
       continue;
     }
     group.forEach((edge, i) => {
@@ -3623,6 +3624,97 @@ function curveParallelEdges(edges) {
         roundness: 0.15 * (Math.floor(i / 2) + 1),
       };
     });
+  }
+}
+
+/* ---------- the curve of a line under a dragged node ----------
+
+   With the physics off — the layout frozen — nothing moves the support
+   of a line, and v0.7.8 drew the lines of a dragged node in arcs
+   through the spot it had left. Now the supports of a dragged node's
+   lines are moved with it, to the same place relative to the line:
+   the line turns and stretches and keeps its bend. With the physics
+   on, vis moves them itself. */
+
+// edge id -> {before: {from, to}, via}, from the start of a drag with
+// the physics off; null otherwise
+let heldCurves = null;
+
+/* Where a support goes when its line moves from `before` to `after`
+   ({from, to} points): the same share along the line and across it.
+   A line of no length has no direction; its support keeps its offset
+   from the line's middle. */
+function movedVia(before, after, via) {
+  const dx = before.to.x - before.from.x;
+  const dy = before.to.y - before.from.y;
+  const length2 = dx * dx + dy * dy;
+  if (!length2) {
+    return {
+      x: (after.from.x + after.to.x) / 2 + via.x - before.from.x,
+      y: (after.from.y + after.to.y) / 2 + via.y - before.from.y,
+    };
+  }
+  const rx = via.x - before.from.x;
+  const ry = via.y - before.from.y;
+  const along = (rx * dx + ry * dy) / length2;
+  const across = (ry * dx - rx * dy) / length2;
+  const ex = after.to.x - after.from.x;
+  const ey = after.to.y - after.from.y;
+  return {
+    x: after.from.x + along * ex - across * ey,
+    y: after.from.y + along * ey + across * ex,
+  };
+}
+
+/* A line's support node, or null for a line without one (a parallel
+   link's fixed curve). The one place that touches it: edgeType.via and
+   positionBezierNode are internal API of vis-network 9.1.9, which
+   index.html pins, like getPoint below. */
+function curveSupport(edgeId) {
+  const edge = network.body.edges[edgeId];
+  const type = edge && edge.edgeType;
+  if (!type || !type.via || !edge.from || !edge.to) return null;
+  return {
+    line: () => ({
+      from: { x: edge.from.x, y: edge.from.y },
+      to: { x: edge.to.x, y: edge.to.y },
+    }),
+    via: () => ({ x: type.via.x, y: type.via.y }),
+    moveTo: (point) => {
+      type.via.x = point.x;
+      type.via.y = point.y;
+    },
+    toMiddle: () => type.positionBezierNode(),
+  };
+}
+
+function curvesOf(nodeIds) {
+  const ids = new Set();
+  for (const id of nodeIds) {
+    for (const edgeId of network.getConnectedEdges(id)) ids.add(edgeId);
+  }
+  return ids;
+}
+
+function holdCurves(nodeIds) {
+  heldCurves = null;
+  if (!layoutFrozen || !nodeIds.length) return;
+  heldCurves = new Map();
+  for (const edgeId of curvesOf(nodeIds)) {
+    const support = curveSupport(edgeId);
+    if (support) heldCurves.set(edgeId, { before: support.line(), via: support.via() });
+  }
+}
+
+function followCurves(nodeIds) {
+  if (!heldCurves || !nodeIds.length) return;
+  for (const edgeId of curvesOf(nodeIds)) {
+    const support = curveSupport(edgeId);
+    if (!support) continue;
+    const held = heldCurves.get(edgeId);
+    // a line that appeared during the drag has no bend to keep
+    if (held) support.moveTo(movedVia(held.before, support.line(), held.via));
+    else support.toMiddle();
   }
 }
 
@@ -3951,6 +4043,48 @@ function setSelectedNode(id) {
   if (network) network.redraw();
 }
 
+/* The drop of a drag. In arrange mode a drag pins the node. Outside
+   it, a drag is somebody looking at the map — unless the node was
+   already pinned, in which case it keeps its pin and takes its new
+   coordinates with it. */
+function handleDragEnd(params) {
+  if (!params.nodes.length) return;
+  const at = network.getPositions(params.nodes);
+  const moved = {};
+  for (const id of params.nodes) {
+    if (!at[id]) continue;
+    if (arrangeMode || isPinned(id)) moved[id] = at[id];
+  }
+  const ids = Object.keys(moved);
+  if (!ids.length) return;
+  // A viewer can look by dragging, but a pinned node is the shared
+  // picture: it goes back where it was, and the page says why.
+  if (needRole("user")) {
+    nodesDs.update(ids.map((id) => ({
+      id: id, x: savedLayout[id].x, y: savedLayout[id].y,
+      fixed: { x: true, y: true },
+    })));
+    showToast(fmt("dragNotSaved", { role: t("role_user") }));
+    return;
+  }
+  // vis has just put back the `fixed` it recorded at dragStart —
+  // which for a pinned node is the `false` loosenForDrag gave it.
+  // Hold the nodes again here and now: saving is a round trip, and
+  // the physics engine would carry them off while it is under way.
+  nodesDs.update(ids.map((id) => ({
+    id: id, x: moved[id].x, y: moved[id].y, fixed: { x: true, y: true },
+  })));
+  // In arrange mode the neighbours go with the pin, as they stood
+  // when the drag began. Moving a pinned node outside it leaves
+  // what was recorded alone: offsets move with their node anyway.
+  const around = {};
+  if (arrangeMode && dragNeighbours) {
+    for (const id of ids) if (dragNeighbours[id]) around[id] = dragNeighbours[id];
+  }
+  dragNeighbours = null;
+  pinNodes(moved, around);
+}
+
 function renderGraph() {
   const { nodes, edges } = buildGraphData();
   // Anything nobody pinned starts next to what it is plugged into, laid
@@ -3971,9 +4105,9 @@ function renderGraph() {
       // them vis's own behaviour, which is better than a reimplementation
       interaction: { hover: true, multiselect: true },
       nodes: { borderWidthSelected: 4 },
-      // straight lines that follow their nodes, frozen or not; parallel
-      // ones are curved one by one (curveParallelEdges)
-      edges: { smooth: false },
+      // curves on support nodes of the physics, as vis has them by
+      // default; parallel links are curved one by one (curveParallelEdges)
+      edges: { smooth: { type: "dynamic" } },
       // Every node arrives with a position, but whatever vis still
       // decides on its own should come out the same in every tab
       layout: { randomSeed: 7 },
@@ -3988,7 +4122,11 @@ function renderGraph() {
     // v0.7.1's guard waited for a click that never came — so it
     // swallowed the next real one, and after moving a node the first
     // click on anything opened nothing.
-    network.on("dragStart", (params) => loosenForDrag(params.nodes));
+    network.on("dragStart", (params) => {
+      loosenForDrag(params.nodes);
+      holdCurves(params.nodes);
+    });
+    network.on("dragging", (params) => followCurves(params.nodes));
     // Double click on a container takes everything on it: the cloud of
     // devices behind one switch is the thing people want to move out
     // of the way in one go.
@@ -4002,45 +4140,11 @@ function renderGraph() {
     });
     network.on("dragEnd", (params) => {
       dragging.clear();
-      if (!params.nodes.length) return;
-      // In arrange mode a drag places the node. Outside it, a drag is
-      // somebody looking at the map — unless the node was already
-      // pinned, in which case it keeps its pin and takes its new
-      // coordinates with it.
-      const at = network.getPositions(params.nodes);
-      const moved = {};
-      for (const id of params.nodes) {
-        if (!at[id]) continue;
-        if (arrangeMode || isPinned(id)) moved[id] = at[id];
-      }
-      const ids = Object.keys(moved);
-      if (!ids.length) return;
-      // A viewer can look by dragging, but a pinned node is the shared
-      // picture: it goes back where it was, and the page says why.
-      if (needRole("user")) {
-        nodesDs.update(ids.map((id) => ({
-          id: id, x: savedLayout[id].x, y: savedLayout[id].y,
-          fixed: { x: true, y: true },
-        })));
-        showToast(fmt("dragNotSaved", { role: t("role_user") }));
-        return;
-      }
-      // vis has just put back the `fixed` it recorded at dragStart —
-      // which for a pinned node is the `false` loosenForDrag gave it.
-      // Hold the nodes again here and now: saving is a round trip, and
-      // the physics engine would carry them off while it is under way.
-      nodesDs.update(ids.map((id) => ({
-        id: id, x: moved[id].x, y: moved[id].y, fixed: { x: true, y: true },
-      })));
-      // In arrange mode the neighbours go with the pin, as they stood
-      // when the drag began. Moving a pinned node outside it leaves
-      // what was recorded alone: offsets move with their node anyway.
-      const around = {};
-      if (arrangeMode && dragNeighbours) {
-        for (const id of ids) if (dragNeighbours[id]) around[id] = dragNeighbours[id];
-      }
-      dragNeighbours = null;
-      pinNodes(moved, around);
+      handleDragEnd(params);
+      // wherever the drop left the nodes — a viewer's pinned node goes
+      // back to its place — their lines go along
+      followCurves(params.nodes);
+      heldCurves = null;
     });
     network.on("oncontext", (params) => {
       params.event.preventDefault();
