@@ -271,6 +271,14 @@ FLAP_PORT = 7
 # not exist.
 BLOCKING_WITHOUT_LINK = (20, 21)
 
+# v0.7.9 — a second cable between the core and access-sw-2, no LAG:
+# spanning tree holds it in blocking on access-sw-2, and the map draws
+# it beside the first. access-sw-2's end is an SFP port with a long
+# name, which the port tags on the lines shorten to "1/0/1".
+SECOND_CABLE_CORE_PORT = 10
+SECOND_CABLE_PORT = 27
+SECOND_CABLE_NAME = "TenGigabitEthernet1/0/1"
+
 # A device behind an unmanaged switch on the core—access-sw-3 trunk: no
 # switch has it on a host port, both ends of the trunk see it. Before
 # v0.5.8 it fell off the map into "not on map" although it answers ping.
@@ -439,6 +447,12 @@ def demo_network() -> list[SwitchData]:
     for ray in (ray2, ray4):
         core.ports[core_port_to_ray[ray.ip]].oper_up = True
         ray.ports[24].oper_up = True
+    # …and ray2's second cable, an SFP port running at 1G
+    ray2.ports[SECOND_CABLE_PORT] = PortInfo(
+        if_index=SECOND_CABLE_PORT, name=SECOND_CABLE_NAME, oper_up=True,
+        speed_mbps=1000,
+    )
+    core.ports[SECOND_CABLE_CORE_PORT].oper_up = True
     for ray in (ray1, ray2, ray3):
         core.fdb[ray.bridge_mac] = core_port_to_ray[ray.ip]
     # ray4's own MAC has aged out of the core's table and ray4 sees
@@ -599,7 +613,8 @@ def _add_lldp(core, ray1, ray2, ray3, ray4, core_port_to_ray) -> None:
 
     Four situations at once, all taken from the real network:
     the core and ray2 name each other (a link the MAC tables also
-    infer -> source "both"); the core and ray4 name each other where
+    infer -> source "both"), over two cables, one of them blocked by
+    spanning tree; the core and ray4 name each other where
     the MAC tables cannot help at all (-> source "lldp"); ray2 has an
     unmanaged MikroTik bridge behind an access port; ray1 forwards
     foreign LLDP frames, so two neighbours appear on one port and
@@ -649,6 +664,13 @@ def _add_lldp(core, ray1, ray2, ray3, ray4, core_port_to_ray) -> None:
             sys_name=ray2.sys_name, sys_desc=ray2.sys_descr,
             caps={"bridge"},
         ),
+        # the second cable to ray2: one neighbour on two ports, which
+        # the core alone would take for forwarded LLDP
+        _neighbor(
+            SECOND_CABLE_CORE_PORT, ray2.bridge_mac, SECOND_CABLE_NAME,
+            sys_name=ray2.sys_name, sys_desc=ray2.sys_descr,
+            caps={"bridge"},
+        ),
         _neighbor(
             core_port_to_ray[ray4.ip], ray4.bridge_mac, "Gi0/24",
             sys_name=ray4.sys_name, sys_desc=ray4.sys_descr,
@@ -658,6 +680,11 @@ def _add_lldp(core, ray1, ray2, ray3, ray4, core_port_to_ray) -> None:
     ray2.lldp_neighbors = [
         _neighbor(
             24, core.bridge_mac, "Gi0/2",
+            sys_name=core.sys_name, sys_desc=core.sys_descr,
+            caps={"bridge"},
+        ),
+        _neighbor(
+            SECOND_CABLE_PORT, core.bridge_mac, f"Gi0/{SECOND_CABLE_CORE_PORT}",
             sys_name=core.sys_name, sys_desc=core.sys_descr,
             caps={"bridge"},
         ),
@@ -768,8 +795,10 @@ def _stp_ports(
 def _add_stp(core, ray1, ray2, ray3, ray4, edge) -> None:
     """A spanning tree that is running — except on one switch.
 
-    The core is the root at priority 4096. ray2 holds its uplink in
-    blocking, which the map draws as a dashed red edge. ray4 has STP
+    The core is the root at priority 4096. ray2 has two cables to the
+    core and holds the second in blocking, which the map draws as a
+    dashed red line beside the first (until v0.7.9 it blocked its root
+    port itself, which no tree does). ray4 has STP
     switched off and still reports priority 0, cost 0 and itself as the
     root: the exact trap the verdict in stp.py exists to catch, and the
     reason a demo needs it.
@@ -795,7 +824,7 @@ def _add_stp(core, ray1, ray2, ray3, ray4, edge) -> None:
         ports=_stp_ports(core, {1: 1, 2: 1, 5: 1, 25: 1}, True, ""),
     ))
     for ray, root_port, blocking in (
-        (ray1, 25, None), (ray2, 24, 24),
+        (ray1, 25, None), (ray2, 24, SECOND_CABLE_PORT),
     ):
         states = {root_port: 5}
         if blocking is not None:

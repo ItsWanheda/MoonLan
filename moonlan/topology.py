@@ -389,6 +389,123 @@ def _stp_blocking_names(sw: SwitchData) -> set[str]:
     return {p.name for p in stp.blocking_ports() if p.name}
 
 
+def second_cables(switches: list[SwitchData]) -> dict[str, set[int]]:
+    """Ports `lldp.analyse_ports` took for forwarded LLDP that are a
+    second cable to the same switch (v0.7.9).
+
+    One neighbour on two ports of a switch is the first sign of LLDP
+    forwarding, and from one end alone it is the right reading. Two
+    cables between two switches with no LAG look exactly the same from
+    either end; both ends together tell them apart. It is a second
+    cable when all of this holds:
+
+    - both switches are polled and each names the other on the same
+      number of ports, two or more;
+    - each cable is reported port for port from both ends: our port
+      names their port, and their port names ours back;
+    - nobody else talks on any of these ports;
+    - where a MAC table has the other switch at all, it is behind one
+      of these ports;
+    - spanning tree holds one of the cables in blocking at one end:
+      two cables with nothing blocked would be a loop.
+
+    Forwarding brings a neighbour's frames to a port it is not cabled
+    to, and that port has a cable — and a neighbour — of its own. The
+    mutual agreement alone proves nothing (forwarding is symmetric);
+    together with one talker per port and a blocked cable it does.
+
+    Returns switch ip -> the physical ports to take off its
+    `lldp_forwarded`.
+    """
+    mac_to_switch: dict[str, SwitchData] = {}
+    for sw in switches:
+        for mac in sw.own_macs | ({sw.bridge_mac} if sw.bridge_mac else set()):
+            mac_to_switch.setdefault(mac, sw)
+    by_ip = {sw.ip: sw for sw in switches}
+    # ip -> logical port -> chassis ids heard on it
+    talkers: dict[str, dict[int, set[str]]] = {}
+    # ip -> logical port -> its physical ports with LLDP on them
+    physical: dict[str, dict[int, set[int]]] = {}
+    # ip -> other ip -> our logical port -> the other's ports it names
+    names: dict[str, dict[str, dict[int, set[int | None]]]] = {}
+    for sw in switches:
+        for neighbor in sw.lldp_neighbors:
+            if neighbor.local_ifindex is None:
+                continue
+            local = aggregate_port(sw, neighbor.local_ifindex)
+            talkers.setdefault(sw.ip, {}).setdefault(local, set()).add(
+                neighbor.chassis_id
+            )
+            physical.setdefault(sw.ip, {}).setdefault(local, set()).add(
+                neighbor.local_ifindex
+            )
+            other = mac_to_switch.get(neighbor.chassis_id)
+            if other is None or other.ip == sw.ip:
+                continue
+            remote, _ = resolve_remote_port(
+                other, neighbor.port_id, neighbor.port_desc
+            )
+            if remote is not None:
+                remote = aggregate_port(other, remote)
+            names.setdefault(sw.ip, {}).setdefault(other.ip, {}).setdefault(
+                local, set()
+            ).add(remote)
+
+    def macs_behind(sw: SwitchData, other: SwitchData) -> set[int]:
+        macs = other.own_macs | ({other.bridge_mac} if other.bridge_mac else set())
+        return {aggregate_port(sw, sw.fdb[m]) for m in macs if m in sw.fdb}
+
+    released: dict[str, set[int]] = {}
+    for ip, others in names.items():
+        sw = by_ip[ip]
+        for other_ip, ours in others.items():
+            theirs = names.get(other_ip, {}).get(ip, {})
+            if len(ours) < 2 or len(theirs) != len(ours):
+                continue
+            cables = _port_for_port(ours, theirs)
+            if cables is None:
+                continue
+            other = by_ip[other_ip]
+            if any(len(talkers[ip][port]) != 1 for port, _ in cables):
+                continue
+            if any(len(talkers[other_ip][remote]) != 1 for _, remote in cables):
+                continue
+            if not macs_behind(sw, other) <= set(ours):
+                continue
+            if not macs_behind(other, sw) <= set(theirs):
+                continue
+            ours_blocked = _stp_blocking_names(sw)
+            theirs_blocked = _stp_blocking_names(other)
+            if not any(
+                port_name(sw, port) in ours_blocked
+                or port_name(other, remote) in theirs_blocked
+                for port, remote in cables
+            ):
+                continue
+            for port, remote in cables:
+                released.setdefault(ip, set()).update(physical[ip][port])
+                released.setdefault(other_ip, set()).update(
+                    physical[other_ip][remote]
+                )
+    return released
+
+
+def _port_for_port(
+    ours: dict[int, set[int | None]], theirs: dict[int, set[int | None]]
+) -> list[tuple[int, int]] | None:
+    """(our port, their port) for every cable, when each of our ports
+    names exactly one of theirs and that one names it back; else None."""
+    cables = []
+    for port, named in ours.items():
+        remote = next(iter(named)) if len(named) == 1 else None
+        if remote is None or theirs.get(remote) != {port}:
+            return None
+        cables.append((port, remote))
+    if len({remote for _, remote in cables}) != len(theirs):
+        return None
+    return cables
+
+
 def lldp_link_candidates(
     switches: list[SwitchData],
 ) -> dict[frozenset, dict]:
@@ -1691,6 +1808,12 @@ def build_topology(
     # refine ports but never remove anything — so a branch the MAC
     # tables had spread into a star kept its star, and the LLDP edge
     # laid on top closed a ring that does not exist.
+    # …and before that, the second cables between two switches are told
+    # apart from forwarded LLDP. The switch's own answer changes with
+    # it, so the ports panel and the cards say the same as the map.
+    for ip, ports in second_cables(switches).items():
+        sw = switch_by_ip[ip]
+        sw.lldp_forwarded = sw.lldp_forwarded - ports
     lldp_pairs = lldp_link_candidates(switches)
     links, uplinks, info = infer_tree(
         switches, switches_on_port, sees, lldp_pairs

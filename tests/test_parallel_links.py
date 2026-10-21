@@ -7,14 +7,19 @@ not — and the other cable was on no map. Both are drawn now: the link
 of the tree is the cable that carries traffic, and the other is a link
 of its own beside it, marked `parallel`, with its own ports and its own
 STP state.
+
+From one end alone, one neighbour on two ports is what forwarded LLDP
+looks like, and `analyse_ports` flags both ports. The two ends together
+tell a second cable apart (`second_cables`), and only then.
 """
 
 import types
 import unittest
 
-from moonlan.lldp import LldpNeighbor
-from moonlan.snmp_collector import PortInfo, SwitchData
-from moonlan.topology import build_topology, parallel_links
+from moonlan import demo
+from moonlan.lldp import LldpNeighbor, analyse_ports
+from moonlan.snmp_collector import PortInfo, SwitchData, aggregate_port
+from moonlan.topology import build_topology, parallel_links, second_cables
 
 CORE = "10.0.0.10"
 ACCESS = "10.0.0.22"
@@ -63,6 +68,16 @@ def two_cables(core_side=True, access_side=True, blocked=("1/28",)):
                                  neighbor(27, core.bridge_mac, "Gi0/3")]
     access.stp = stp_blocking(*blocked)
     return [core, access]
+
+
+def as_collected(switches):
+    """lldp_forwarded and lldp_crowded, set the way the collector sets
+    them: each switch on its own"""
+    for sw in switches:
+        sw.lldp_forwarded, sw.lldp_crowded = analyse_ports(
+            sw.lldp_neighbors, lambda i, sw=sw: aggregate_port(sw, i), sw.fdb
+        )
+    return switches
 
 
 def links_between(switches):
@@ -127,6 +142,77 @@ class ParallelLinksTest(unittest.TestCase):
 
     def test_nothing_without_a_link(self):
         self.assertEqual(parallel_links(two_cables(), []), [])
+
+
+class SecondCableOrForwardingTest(unittest.TestCase):
+    def test_each_end_alone_sees_forwarding(self):
+        core, access = as_collected(two_cables())
+        self.assertEqual(core.lldp_forwarded, {3, 4})
+        self.assertEqual(access.lldp_forwarded, {27, 28})
+
+    def test_both_ends_together_see_two_cables(self):
+        switches = as_collected(two_cables())
+        self.assertEqual(second_cables(switches), {CORE: {3, 4}, ACCESS: {27, 28}})
+        main, second = links_between(switches)
+        self.assertEqual(ends(main), ("Gi0/3", "1/27"))
+        self.assertEqual(main["source"], "both")
+        self.assertEqual(ends(second), ("Gi0/4", "1/28"))
+        self.assertTrue(second["parallel"])
+        # the ports panel and the cards say the same as the map
+        core, access = switches
+        self.assertEqual((core.lldp_forwarded, access.lldp_forwarded),
+                         (set(), set()))
+
+    def assertForwarding(self, switches):
+        self.assertEqual(second_cables(switches), {})
+        core, _ = switches
+        build_topology(switches)
+        self.assertEqual(core.lldp_forwarded, {3, 4})
+
+    def test_one_far_port_on_two_near_ones_is_forwarding(self):
+        switches = two_cables()
+        core, access = switches
+        # the same frame of the same far port, on two ports of the core
+        core.lldp_neighbors = [neighbor(3, access.bridge_mac, "1/27"),
+                               neighbor(4, access.bridge_mac, "1/27")]
+        access.lldp_neighbors = [neighbor(27, core.bridge_mac, "Gi0/3")]
+        self.assertForwarding(as_collected(switches))
+
+    def test_one_end_alone_is_not_enough(self):
+        self.assertForwarding(as_collected(two_cables(access_side=False)))
+
+    def test_a_port_with_a_talker_of_its_own(self):
+        switches = two_cables()
+        core, _ = switches
+        core.lldp_neighbors.append(neighbor(4, "02:00:00:00:00:99", "ether1"))
+        self.assertForwarding(as_collected(switches))
+
+    def test_nothing_blocked_is_no_second_cable(self):
+        # two cables with nothing in blocking would be a loop
+        self.assertForwarding(as_collected(two_cables(blocked=())))
+
+    def test_the_far_switch_behind_a_third_port(self):
+        switches = two_cables()
+        core, access = switches
+        core.fdb[access.bridge_mac] = 9
+        self.assertForwarding(as_collected(switches))
+
+
+class DemoTest(unittest.TestCase):
+    def test_the_demo_has_two_cables_between_two_switches(self):
+        # the demo's own warnings (a switch reporting a LAG it has not,
+        # one nobody sees) are not this test's business
+        with self.assertLogs("moonlan", "WARNING"):
+            _, links, *_ = build_topology(demo.demo_network())
+        pair = [link for link in links
+                if {link["a"], link["b"]} == {"10.0.0.10", "10.0.0.22"}]
+        self.assertEqual(len(pair), 2)
+        main, second = sorted(pair, key=lambda link: bool(link.get("parallel")))
+        self.assertFalse(main.get("stp_blocking"))
+        self.assertEqual(main["source"], "both")
+        self.assertTrue(second["parallel"])
+        self.assertTrue(second["stp_blocking"])
+        self.assertIn(demo.SECOND_CABLE_NAME, (second["a_port"], second["b_port"]))
 
 
 if __name__ == "__main__":
