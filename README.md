@@ -211,7 +211,7 @@ MoonLan/
 │   ├── demo.py             # the demo network
 │   └── server.py           # FastAPI application
 ├── tests/
-├── web/                    # HTML/CSS/JS, English and Russian
+├── web/                    # HTML/CSS/JS, English
 └── docs/
 ~~~
 
@@ -229,10 +229,9 @@ MoonLan/
 - **Health checks** — [docs/HEALTHCHECK.md](docs/HEALTHCHECK.md)
 - **Architecture** — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **API reference** — [docs/API.md](docs/API.md)
-- **Roadmap** (in Russian) — [docs/ROADMAP.md](docs/ROADMAP.md)
 - **Contributing** — [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Security policy** — [SECURITY.md](SECURITY.md)
-- **Changelog** — [CHANGELOG.md](CHANGELOG.md) ([in Russian](CHANGELOG_RU.md))
+- **Changelog** — [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
