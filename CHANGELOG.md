@@ -312,9 +312,9 @@ signing in and lists every route with its role, in a table a test
 checks against the code both ways; docs/CONFIGURATION.md lists every
 key the loader reads, and a test fails on an undocumented one;
 HEALTHCHECK, SECURITY, OPERATIONS and ARCHITECTURE know about sign-in.
-The two READMEs have one structure — the Russian one translated, the
-details in English documents under docs/ (features, configuration,
-sign-in, operations, diagnostics, LLDP/STP/loops), each old section
+The README has one structure, with details in English documents under
+docs/ (features, configuration, sign-in, operations, diagnostics,
+LLDP/STP/loops), each old section
 with an address of its own, and a test that every relative link
 resolves.
 
