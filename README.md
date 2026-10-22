@@ -1,4 +1,3 @@
-[Русская версия → README_RU.md](README_RU.md)
 
 [![Tests](https://github.com/neonight-d/MoonLan/actions/workflows/tests.yml/badge.svg)](https://github.com/neonight-d/MoonLan/actions/workflows/tests.yml)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -26,7 +25,7 @@
 | 🔐 Access | Sign-in with three roles, TOTP or a key (passkey) for administrators, HTTPS of its own or behind a proxy, accounts from the server's shell |
 | 🧪 Diagnostics | FDB, hosts, ports, STP, loop detection, topology, arbitrary MIB walks |
 | 🛡️ Safety | Per-host poll budgets, stale-data labels, command argument validation |
-| 🌐 UI | English/Russian interface, demo mode, responsive dark network map |
+| 🌐 UI | English interface, demo mode, responsive dark network map |
 
 The whole list, item by item: **[docs/FEATURES.md](docs/FEATURES.md)**.
 
@@ -211,7 +210,7 @@ MoonLan/
 │   ├── demo.py             # the demo network
 │   └── server.py           # FastAPI application
 ├── tests/
-├── web/                    # HTML/CSS/JS, English and Russian
+├── web/                    # HTML/CSS/JS, English
 └── docs/
 ~~~
 
@@ -229,10 +228,9 @@ MoonLan/
 - **Health checks** — [docs/HEALTHCHECK.md](docs/HEALTHCHECK.md)
 - **Architecture** — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - **API reference** — [docs/API.md](docs/API.md)
-- **Roadmap** (in Russian) — [docs/ROADMAP.md](docs/ROADMAP.md)
 - **Contributing** — [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Security policy** — [SECURITY.md](SECURITY.md)
-- **Changelog** — [CHANGELOG.md](CHANGELOG.md) ([in Russian](CHANGELOG_RU.md))
+- **Changelog** — [CHANGELOG.md](CHANGELOG.md)
 
 ---
 

@@ -58,8 +58,6 @@ const els = {
   users: document.getElementById("users"),
   usersBody: document.getElementById("users-body"),
   usersClose: document.getElementById("users-close"),
-  langRu: document.getElementById("lang-ru"),
-  langEn: document.getElementById("lang-en"),
 };
 
 let network = null;
@@ -67,11 +65,11 @@ let nodesDs = null;
 let edgesDs = null;
 let topology = { switches: [], links: [], hosts: [], pseudo_switches: [] };
 let isScanning = false;
-let shownDetails = null; // {type: "node"|"link", id} — to re-render on language switch
+let shownDetails = null; // {type: "node"|"link", id}
 let lastEvents = null; // cached journal events for re-render
 let activeAlarms = []; // refreshed with the topology — badge and red borders
 let lastAlarms = null; // {active, cleared} cached for the alarms panel
-let lastStp = null; // cached STP report for re-render on language switch
+let lastStp = null; // cached STP report
 let flapWindowHours = 2; // from the API, for the FLAP tooltip
 let portsIp = null; // switch whose ports panel is open
 let portsTimer = null; // its 30 s auto-refresh
@@ -97,14 +95,10 @@ const colors = {
 
 /* ---------- localization ---------- */
 
-const LANG_KEY = "moonlan-lang";
-let lang = localStorage.getItem(LANG_KEY);
-if (lang !== "ru" && lang !== "en") {
-  lang = (navigator.language || "").toLowerCase().startsWith("ru") ? "ru" : "en";
-}
+const lang = "en";
 
 function t(key) {
-  return (I18N[lang] && I18N[lang][key]) || I18N.en[key] || key;
+  return I18N.en[key] || key;
 }
 
 /* t() with {placeholder} substitution */
@@ -117,7 +111,7 @@ function fmt(key, params) {
 }
 
 function locale() {
-  return lang === "ru" ? "ru-RU" : "en-US";
+  return "en-US";
 }
 
 /* Fill in all static texts for the current language */
@@ -141,49 +135,9 @@ function applyStatic() {
   const discHead = document.querySelector('#ports th[data-sort="disc"]');
   if (errHead) errHead.title = t("errTooltip");
   if (discHead) discHead.title = t("discTooltip");
-  els.langRu.classList.toggle("active", lang === "ru");
-  els.langEn.classList.toggle("active", lang === "en");
   applyFreeze();
   applySidebarCollapsed();
   applyPortLabelMode();
-}
-
-function setLang(newLang) {
-  if (newLang === lang) return;
-  lang = newLang;
-  localStorage.setItem(LANG_KEY, lang);
-  applyStatic();
-  applyRole();
-  // the sign-in form is redrawn in the new language; a form half way
-  // through a code or a password is left alone
-  if (gateUp() && gateView === "signIn") {
-    // the name typed so far survives the switch
-    const typed = els.gateBody.querySelector('input[name="username"]');
-    renderSignIn(undefined, typed && typed.value);
-  }
-  applyArrangeMode();
-  updateScanStatus();
-  renderSidebar();
-  renderGraph();
-  // re-render whatever panel is open
-  if (!els.details.classList.contains("hidden") && shownDetails) {
-    if (shownDetails.type === "link") showLinkDetails(shownDetails.id);
-    else showDetails(shownDetails.id);
-  }
-  if (!els.journal.classList.contains("hidden") && lastEvents) {
-    renderJournal(lastEvents);
-  }
-  if (!els.ports.classList.contains("hidden") && lastPorts) {
-    renderPorts(lastPorts);
-  }
-  if (!els.alarms.classList.contains("hidden") && lastAlarms) {
-    renderAlarms();
-  }
-  if (!els.stp.classList.contains("hidden") && lastStp) {
-    renderStp();
-  }
-  if (!els.actions.classList.contains("hidden")) renderAction();
-  if (!els.users.classList.contains("hidden")) refreshUsers();
 }
 
 /* ---------- who is looking ----------
@@ -447,17 +401,6 @@ let signInState = null; // redraws what the sign-in form says about HTTPS and ke
 
 /* The sign-in form's own language switch: the language is needed
    before anybody has signed in. */
-function gateLangSwitch() {
-  const choose = (code) => h("button", {
-    type: "button", text: code.toUpperCase(),
-    class: lang === code ? "active" : null,
-    "aria-pressed": lang === code ? "true" : "false",
-    onclick: () => setLang(code),
-  });
-  return h("span", { class: "lang-switch gate-lang", role: "group",
-                     "aria-label": "Language" }, choose("ru"), choose("en"));
-}
-
 function renderSignIn(message, typedName) {
   gateView = "signIn";
   const name = field("fieldName", {
@@ -491,7 +434,6 @@ function renderSignIn(message, typedName) {
     signInWithKey("", error, withKey);
   });
   gateForm("signInTitle", [
-    gateLangSwitch(),
     everSignedIn ? h("p", { text: t("signInAgain") }) : null,
     note,
     name.label, password.label, error,
@@ -4203,7 +4145,7 @@ function drawPortTags(ctx) {
 function applyPortLabelMode() {
   // the menu's item, in the middle of a sentence
   const item = t("portLabels_" + portLabelMode);
-  const mode = item.charAt(0).toLocaleLowerCase(lang) + item.slice(1);
+  const mode = item.charAt(0).toLowerCase() + item.slice(1);
   labelIcon(els.portLabelsBtn, fmt("portLabelsBtn", { mode }));
   els.portLabelsBtn.classList.toggle("active", portLabelMode !== "off");
   els.portLabelsMenu.setAttribute("aria-label", t("portLabelsMenu"));
@@ -6038,8 +5980,6 @@ els.alarmsClose.addEventListener("click", () =>
 els.stpBtn.addEventListener("click", toggleStp);
 els.stpClose.addEventListener("click", () => els.stp.classList.add("hidden"));
 window.addEventListener("resize", fitHeader);
-els.langRu.addEventListener("click", () => setLang("ru"));
-els.langEn.addEventListener("click", () => setLang("en"));
 
 /* Keyboard. `P` pins or releases whatever is selected — but only when
    the focus is not in a field, or it would fire while somebody types

@@ -4,8 +4,6 @@ All notable changes to MoonLan, newest first. Dates are release dates;
 every version was verified on the production network it was written
 for before the next one started.
 
-Русская версия — [CHANGELOG_RU.md](CHANGELOG_RU.md).
-
 ## v0.7.10 — 2026-10-21
 
 The layout of v0.7.8, tags that keep apart, numbers only. Goes out
@@ -78,7 +76,7 @@ core-sw — access-sw-2, the second cable on an SFP port named
 TenGigabitEthernet1/0/1.
 
 **Pin and Unpin.** The menu said "Place here" and "Release", the header
-"placed by hand", and the Russian interface had three verbs for two
+"placed by hand", and the old wording used three verbs for two
 actions. A node is pinned and unpinned now: in the menu, the header,
 the hints, the journal, the docs and the service's own log.
 
@@ -314,9 +312,9 @@ signing in and lists every route with its role, in a table a test
 checks against the code both ways; docs/CONFIGURATION.md lists every
 key the loader reads, and a test fails on an undocumented one;
 HEALTHCHECK, SECURITY, OPERATIONS and ARCHITECTURE know about sign-in.
-The two READMEs have one structure — the Russian one translated, the
-details in English documents under docs/ (features, configuration,
-sign-in, operations, diagnostics, LLDP/STP/loops), each old section
+The README has one structure, with details in English documents under
+docs/ (features, configuration, sign-in, operations, diagnostics,
+LLDP/STP/loops), each old section
 with an address of its own, and a test that every relative link
 resolves.
 
@@ -1089,5 +1087,4 @@ corruption detection (a failing cable makes a switch learn addresses a
 few bits from the real one), and placement of devices visible only
 through trunks.
 
-Earlier versions are summarised in the roadmap table of the README and
-in [docs/ROADMAP.md](docs/ROADMAP.md).
+Earlier versions are summarised in the roadmap table of the README.
