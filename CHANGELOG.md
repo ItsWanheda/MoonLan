@@ -76,7 +76,7 @@ core-sw — access-sw-2, the second cable on an SFP port named
 TenGigabitEthernet1/0/1.
 
 **Pin and Unpin.** The menu said "Place here" and "Release", the header
-"placed by hand", and the Russian interface had three verbs for two
+"placed by hand", and the old wording used three verbs for two
 actions. A node is pinned and unpinned now: in the menu, the header,
 the hints, the journal, the docs and the service's own log.
 
@@ -1087,5 +1087,4 @@ corruption detection (a failing cable makes a switch learn addresses a
 few bits from the real one), and placement of devices visible only
 through trunks.
 
-Earlier versions are summarised in the roadmap table of the README and
-in [docs/ROADMAP.md](docs/ROADMAP.md).
+Earlier versions are summarised in the roadmap table of the README.
