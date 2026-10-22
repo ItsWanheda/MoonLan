@@ -4,8 +4,6 @@ All notable changes to MoonLan, newest first. Dates are release dates;
 every version was verified on the production network it was written
 for before the next one started.
 
-Русская версия — [CHANGELOG_RU.md](CHANGELOG_RU.md).
-
 ## v0.7.10 — 2026-10-21
 
 The layout of v0.7.8, tags that keep apart, numbers only. Goes out
