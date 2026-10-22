@@ -36,7 +36,7 @@ For SNMP changes, remember that successful observation, partial observation, sta
 
 Update documentation when you change configuration, API behavior, topology rules, operator-visible UI behavior, alarms, or diagnostic commands.
 
-Do not edit `CHANGELOG.md`, `CHANGELOG_RU.md` or the version number in `moonlan/__init__.py`. The maintainer writes the changelog and sets the version when a release is cut; describe the user-visible effect of your change in the pull request instead, and it will be carried into the changelog from there.
+Do not edit `CHANGELOG.md` or the version number in `moonlan/__init__.py`. The maintainer writes the changelog and sets the version when a release is cut; describe the user-visible effect of your change in the pull request instead, and it will be carried into the changelog from there.
 
 ## Commit messages
 
