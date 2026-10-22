@@ -1,6 +1,6 @@
 [English Version → README.md](README.md)
 
-[![Tests](https://github.com/neonight-d/MoonLan/actions/workflows/tests.yml/badge.svg)](https://github.com/neonight-d/MoonLan/actions/workflows/tests.yml)
+[![Tests](https://github.com/ItsWanheda/MoonLan/actions/workflows/tests.yml/badge.svg)](https://github.com/neonight-d/MoonLan/actions/workflows/tests.yml)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg)](https://www.python.org/)
 
