@@ -344,4 +344,3 @@ Everything MoonLan does, as of v0.7.10 — the list the README used to carry. Th
 - SNMP diagnostic tool: `python -m moonlan.diag <ip>`.
 
 Version history: [CHANGELOG.md](../CHANGELOG.md)
-([русская версия](../CHANGELOG_RU.md)).
